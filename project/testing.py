@@ -41,7 +41,7 @@ for episode in range(num_episodes):
             logits = policy(torch.FloatTensor(state).to("cpu"))
             dist = torch.distributions.Categorical(logits=logits)
             action = dist.sample().item()
-            action = env.action_space.sample()
+
             actions.append(action)
 
         

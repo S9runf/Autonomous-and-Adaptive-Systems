@@ -117,10 +117,13 @@ class PPOAgent:
                 # take a step in the environment
                 obs, reward, done, info = self.env.step(actions_t)
 
-                rewards.append(reward)
-                rewards.append(reward)
+                # add the shaped rewards to the sparse rewards
+                for shaped in info["shaped_r_by_agent"]:
+                    shaped_reward = reward + shaped
+                    rewards.append(shaped_reward)
+                    ep_reward += shaped_reward
 
-                ep_reward += reward
+                ep_reward -= reward
 
                 for action, log_prob in zip(actions_t, log_probs_t):
                     actions.append(action)
@@ -141,7 +144,7 @@ class PPOAgent:
         print(f"mean episode reward: {np.mean(ep_rewards)}")
 
         return states, actions, log_probs, rewards, dones
-    
+
     def get_actions(self, states):
         actions = []
         log_probs = []
@@ -163,7 +166,7 @@ class PPOAgent:
             actions.append(action.item())
 
         return actions, log_probs
-    
+
     def evaluate(self, states, actions):
 
         # concatenate the states of both agents

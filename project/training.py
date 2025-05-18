@@ -6,8 +6,6 @@ from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv, Overcooked
 
 from agents.ppoAgent import PPOAgent
 
-import gymnasium as gym
-
 
 def main():
     base_mdp = OvercookedGridworld.from_layout_name("cramped_room", old_dynamics=True)
@@ -15,7 +13,7 @@ def main():
     env = Overcooked(base_env=base_env, featurize_fn=base_env.featurize_state_mdp)
     agent = PPOAgent(env)
 
-    agent.learn(total_timesteps=10000)
+    agent.learn()
 
     # get the working directory path
     current_dir = os.path.dirname(os.path.abspath(__file__))
