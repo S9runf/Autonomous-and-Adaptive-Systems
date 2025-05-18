@@ -4,11 +4,10 @@ import torch.optim as optim
 from torch.distributions import Categorical
 import numpy as np
 from models.actor_critic import ActorCritic
-import random
+
 from tqdm import tqdm
 
 class PPOAgent:
-
     def __init__(
     self,
     env, 
@@ -19,7 +18,7 @@ class PPOAgent:
     eps=0.2,
     lr=1e-3
   ):
-        self.device = torch.device("mps")
+        self.device = torch.device("cpu")
 
         # environment parameters
         self.env = env
@@ -30,7 +29,7 @@ class PPOAgent:
         self.actor = ActorCritic(self.input_dim, self.action_dim)\
             .to(self.device)
         # critic takes the observations of both agents as input
-        self.critic = ActorCritic(self.input_dim, 1)\
+        self.critic = ActorCritic(2 * self.input_dim, 1)\
             .to(self.device)
 
         # define the optimizers
@@ -59,7 +58,7 @@ class PPOAgent:
 
             V, _ = self.evaluate(states, actions)
 
-            # calculate the advantages
+            # compute the advantages
             adv, expected_returns = self.gae(rewards, V, dones)
             # normalize the advantages
             adv = (adv - adv.mean()) / (adv.std() + 1e-10)
@@ -68,26 +67,23 @@ class PPOAgent:
                 # get the new state values and log probabilities
                 V, log_probs = self.evaluate(states, actions)
 
-                # calculate the ratio of the new and old probabilities
-                # detach the old log probabilities to avoid backpropagation
-                ratios = torch.exp(log_probs - log_probs_old.detach())
+                # compute the ratio (pi_theta / pi_theta_old)
+                ratios = torch.exp(log_probs - log_probs_old)
 
-                # calculate the surrogate loss
+                # compute the surrogate loss
                 unclipped = ratios * adv
                 clipped = torch.clamp(ratios, 1 - self.eps, 1 + self.eps) * adv
 
-                # calculate the actor loss
                 actor_loss = -torch.min(unclipped, clipped).mean()
-
-                # calculate the critic loss
                 critic_loss = nn.MSELoss()(V, expected_returns)
 
-                # update the actor and critic networks
+                # optimize the actor
                 self.actor_optimizer.zero_grad()
                 # keep the graph to allow backpropagation through the critic
                 actor_loss.backward(retain_graph=True)
                 self.actor_optimizer.step()
 
+                # optimize the critic
                 self.critic_optimizer.zero_grad()
                 critic_loss.backward()
                 self.critic_optimizer.step()
@@ -99,98 +95,110 @@ class PPOAgent:
         log_probs = []
         rewards = []
         dones = []
+        ep_rewards = []
 
         t = 0
         while t < self.batch_steps:
             # reset the environment
-            obs, _ = self.env.reset()
+            obs = self.env.reset()
             done = False
-
             ep_reward = 0
 
-            ep_step = 0
-
-            # run an episode until complete
-            while ep_step < self.episode_steps:
+            while not done:
                 t += 1
-                ep_step += 1
-                states.append(obs)
-    
-                # get the action from the actor
-                action, action_log_probs = self.get_action(obs)
-                actions.append(action)
-                log_probs.append(action_log_probs)
 
-                obs, reward, done, _, info = self.env.step(action)
+                # obtain state representation from the observation
+                obs = obs["both_agent_obs"]
+
+                states.append(obs)
+                # get the actions for both agents
+                actions_t, log_probs_t = self.get_actions(obs)
+
+                # take a step in the environment
+                obs, reward, done, info = self.env.step(actions_t)
+
+                rewards.append(reward)
+                rewards.append(reward)
+
                 ep_reward += reward
-                rewards.append(ep_reward)
+
+                for action, log_prob in zip(actions_t, log_probs_t):
+                    actions.append(action)
+                    log_probs.append(log_prob)
+
+                # TODO: find a better way to handle the done flag
+                dones.append(done)
                 dones.append(done)
 
-                if done or t == self.batch_steps:
-                    break
-            
-        # update the progress bar
+            ep_rewards.append(ep_reward)
+
         self.pbar.update(t)
-        
-        # convert the lists to tensors
+
         states = torch.FloatTensor(np.array(states)).to(self.device)
-        actions = torch.LongTensor(actions).to(self.device)
-        log_probs = torch.FloatTensor(log_probs).to(self.device)
-        rewards = torch.FloatTensor(rewards).to(self.device)
-        dones = torch.FloatTensor(dones).to(self.device)
-              
+        actions = torch.LongTensor(np.array(actions)).to(self.device)
+        log_probs = torch.FloatTensor(np.array(log_probs)).to(self.device)
+
+        print(f"mean episode reward: {np.mean(ep_rewards)}")
+
         return states, actions, log_probs, rewards, dones
+    
+    def get_actions(self, states):
+        actions = []
+        log_probs = []
 
+        for state in states:
+            # convert the states to tensors
+            state = torch.FloatTensor(state).to(self.device)
 
-    def get_action(self, obs):
-        # convert the observation to a tensor
-        obs = torch.FloatTensor(obs).to(self.device)
+            # get the action logits from the actors
+            logits = self.actor(state)
 
-        # get the action from the actor
-        logits = self.actor(obs)
-        dist = Categorical(logits=logits)
+            # create a categorical distribution from the logits
+            dist = Categorical(logits=logits)
+            # sample an action from the distribution
+            action = dist.sample()
 
-        # sample the action
-        action = dist.sample()
+            # get the log probability of the action
+            log_probs.append(dist.log_prob(action).item())
+            actions.append(action.item())
 
-        # get the log probability of the action
-        log_prob = dist.log_prob(action)
-
-        return action.item(), log_prob.item()
-
+        return actions, log_probs
+    
     def evaluate(self, states, actions):
 
-        # get the state values from the critic and remove the batch dimension
-        V = self.critic(states).squeeze()
+        # concatenate the states of both agents
+        joint_states = states.view(states.shape[0], -1)
+        # get the values for the states from the critic
+        V = self.critic(joint_states).squeeze()
+        # repeat the values to match the shape of the returns
+        V = V.repeat_interleave(2)
 
-        # get the state values and log probabilities of the actions
+        # flatten the second dimension of the states
+        states = states.view(-1, self.input_dim)
+
+        # get the action logits from the actor
         logits = self.actor(states)
+        # create a categorical distribution from the logits
         dist = Categorical(logits=logits)
-    
+        # get the log probabilities of the actions
         log_probs = dist.log_prob(actions)
 
         return V, log_probs
 
     def gae(self, rewards, V, dones):
         advantages = []
-        expected_returns = []
-
+        returns = []
+        # add a zero at the end for the the terminal state
+        values = torch.cat([V, torch.zeros(1).to(self.device)], dim=0).detach()
         gae = 0
         for t in reversed(range(len(rewards))):
-            if t == len(rewards) - 1:
-                next_value = 0
-            else:
-                next_value = V[t + 1] * (1 - dones[t])
-
-            expected_return = rewards[t] + self.gamma * next_value
-            delta = expected_return - V[t]
+            # if the state is terminal next_value is 0
+            next_value = values[t + 1] * (1 - dones[t])
+            delta = rewards[t] + self.gamma * next_value - values[t]
             gae = delta + self.gamma * gae
             advantages.insert(0, gae)
-            expected_returns.append(expected_return)
 
         advantages = torch.FloatTensor(advantages).to(self.device)
-        expected_returns = torch.FloatTensor(expected_returns).to(self.device)
+        returns = advantages + V.detach()
 
-        return advantages, expected_returns
-
-
+        return advantages, returns

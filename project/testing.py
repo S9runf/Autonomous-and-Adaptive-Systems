@@ -1,45 +1,58 @@
 import torch
 
-from models.actor_critic import ActorCritic
+from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv, Overcooked
+from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld
+from overcooked_ai_py.visualization.state_visualizer import StateVisualizer
 
-import gymnasium as gym
+from models.actor_critic import ActorCritic
 
 import os
 
-env = gym.make("CartPole-v1", render_mode="human")
+base_mdp = OvercookedGridworld.from_layout_name("cramped_room", old_dynamics=True)
+base_env = OvercookedEnv.from_mdp(base_mdp, horizon=400, info_level=0)
+env = Overcooked(base_env=base_env, featurize_fn=base_env.featurize_state_mdp)
+
+visualizer = StateVisualizer()
 
 num_episodes = 100
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
 policy = ActorCritic(env.observation_space.shape[0], env.action_space.n)
-policy.load_state_dict(torch.load(f"{current_dir}/weights/cartpole.pth"))
+policy.load_state_dict(torch.load(f"{current_dir}/weights/overcooked-ppo.pth"))
 
 total_rewards = []
 soups = []
 
 for episode in range(num_episodes):
-    obs, _ = env.reset()
-    
+    obs = env.reset()
     done = False
     episode_reward = 0
     soup_count = 0
+
+    os.makedirs(f"{current_dir}/visualizations", exist_ok=True)
 
     # the environment will end automatically when horizon is reached
     step = 0
     while not done:
         step += 1
         actions = []
-        logits = policy(torch.FloatTensor(obs).to("cpu"))
-        action = torch.argmax(logits).item()
+        for state in obs["both_agent_obs"]:
+            logits = policy(torch.FloatTensor(state).to("cpu"))
+            dist = torch.distributions.Categorical(logits=logits)
+            action = dist.sample().item()
+            action = env.action_space.sample()
+            actions.append(action)
 
         
-        obs, reward, done, _, info = env.step(action)
+        obs, reward, done, info = env.step(actions)
 
         soup_count += reward // 20
         episode_reward += reward
 
     total_rewards.append(episode_reward)
     soups.append(soup_count)
+    print(f"Episode {episode + 1}/{num_episodes} - Reward: {episode_reward} - Soup Count: {soup_count}")
 
 print(f"Average Reward: {sum(total_rewards) / num_episodes}")
+print(f"average soup count: {sum(soups) / num_episodes}")
