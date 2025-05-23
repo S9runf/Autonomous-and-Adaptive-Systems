@@ -1,5 +1,5 @@
 import torch
-
+import numpy as np
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv, Overcooked
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld
 from overcooked_ai_py.visualization.state_visualizer import StateVisualizer
@@ -7,6 +7,8 @@ from overcooked_ai_py.visualization.state_visualizer import StateVisualizer
 from models.actor_critic import ActorCritic
 
 import os
+
+device = "cpu"
 
 base_mdp = OvercookedGridworld.from_layout_name("cramped_room", old_dynamics=True)
 base_env = OvercookedEnv.from_mdp(base_mdp, horizon=400, info_level=0)
@@ -37,13 +39,11 @@ for episode in range(num_episodes):
     while not done:
         step += 1
         actions = []
-        for state in obs["both_agent_obs"]:
-            logits = policy(torch.FloatTensor(state).to("cpu"))
-            dist = torch.distributions.Categorical(logits=logits)
-            action = dist.sample().item()
-
-            actions.append(action)
-
+        states = torch.FloatTensor(np.array(obs["both_agent_obs"])).to(device)
+        logits = policy(states)
+        actions = torch.argmax(logits, dim=1).tolist()
+        #dist = torch.distributions.Categorical(logits=logits)
+        #actions = dist.sample().tolist()
         
         obs, reward, done, info = env.step(actions)
 

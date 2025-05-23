@@ -8,6 +8,7 @@ from models.actor_critic import ActorCritic
 from tqdm import tqdm
 
 class PPOAgent:
+
     def __init__(
     self,
     env, 
@@ -58,7 +59,7 @@ class PPOAgent:
 
             V, _ = self.evaluate(states, actions)
 
-            # compute the advantages
+            # calculate the advantages
             adv, expected_returns = self.gae(rewards, V, dones)
             # normalize the advantages
             adv = (adv - adv.mean()) / (adv.std() + 1e-10)
@@ -67,23 +68,25 @@ class PPOAgent:
                 # get the new state values and log probabilities
                 V, log_probs = self.evaluate(states, actions)
 
-                # compute the ratio (pi_theta / pi_theta_old)
+                # calculate the ratio of the new and old probabilities
                 ratios = torch.exp(log_probs - log_probs_old)
 
-                # compute the surrogate loss
+                # calculate the surrogate loss
                 unclipped = ratios * adv
                 clipped = torch.clamp(ratios, 1 - self.eps, 1 + self.eps) * adv
 
+                # calculate the actor loss
                 actor_loss = -torch.min(unclipped, clipped).mean()
+                # calculate the critic loss
+                V = V.unsqueeze(1)
                 critic_loss = nn.MSELoss()(V, expected_returns)
 
-                # optimize the actor
+                # update the actor and critic networks
                 self.actor_optimizer.zero_grad()
                 # keep the graph to allow backpropagation through the critic
                 actor_loss.backward(retain_graph=True)
                 self.actor_optimizer.step()
 
-                # optimize the critic
                 self.critic_optimizer.zero_grad()
                 critic_loss.backward()
                 self.critic_optimizer.step()
@@ -104,104 +107,97 @@ class PPOAgent:
             done = False
             ep_reward = 0
 
+            # run an episode until complete
             while not done:
                 t += 1
 
-                # obtain state representation from the observation
+                # get the observations of both agents
                 obs = obs["both_agent_obs"]
 
                 states.append(obs)
-                # get the actions for both agents
-                actions_t, log_probs_t = self.get_actions(obs)
 
-                # take a step in the environment
-                obs, reward, done, info = self.env.step(actions_t)
+                with torch.no_grad():
+                    actions_t, log_probs_t = self.get_actions(obs)
 
-                # add the shaped rewards to the sparse rewards
-                for shaped in info["shaped_r_by_agent"]:
-                    shaped_reward = reward + shaped
-                    rewards.append(shaped_reward)
-                    ep_reward += shaped_reward
+                actions.append(actions_t)
+                log_probs.append(log_probs_t)
 
-                ep_reward -= reward
+                obs, reward, done, info = self.env.step(actions_t.tolist())
 
-                for action, log_prob in zip(actions_t, log_probs_t):
-                    actions.append(action)
-                    log_probs.append(log_prob)
 
-                # TODO: find a better way to handle the done flag
+                # add shaped rewards to the episode reward
+                shaped_rewards = torch.FloatTensor(info["shaped_r_by_agent"])\
+                    .to(self.device)
+                shaped_rewards += reward
+                ep_reward += reward + shaped_rewards.sum()
+
+                rewards.append(shaped_rewards)
                 dones.append(done)
-                dones.append(done)
-
+            
             ep_rewards.append(ep_reward)
 
+        # update the progress bar
         self.pbar.update(t)
 
+        # convert the lists to tensors
         states = torch.FloatTensor(np.array(states)).to(self.device)
-        actions = torch.LongTensor(np.array(actions)).to(self.device)
-        log_probs = torch.FloatTensor(np.array(log_probs)).to(self.device)
+        actions = torch.stack(actions).to(self.device)
+        log_probs = torch.stack(log_probs).to(self.device)
+        rewards = torch.stack(rewards).to(self.device)
+        dones = torch.FloatTensor(dones).to(self.device)
 
-        print(f"mean episode reward: {np.mean(ep_rewards)}")
+        print(f"average episode reward: {np.mean(ep_rewards)}")
 
         return states, actions, log_probs, rewards, dones
 
-    def get_actions(self, states):
-        actions = []
-        log_probs = []
+    def get_actions(self, obs):
+        # convert the observations to a tensor
+        states = torch.FloatTensor(np.array(obs)).to(self.device)
 
-        for state in states:
-            # convert the states to tensors
-            state = torch.FloatTensor(state).to(self.device)
+        # sample the action from the actor policy
+        logits = self.actor(states)
+        dist = Categorical(logits=logits)
+        actions = dist.sample()
 
-            # get the action logits from the actors
-            logits = self.actor(state)
+        log_prob = dist.log_prob(actions)
 
-            # create a categorical distribution from the logits
-            dist = Categorical(logits=logits)
-            # sample an action from the distribution
-            action = dist.sample()
-
-            # get the log probability of the action
-            log_probs.append(dist.log_prob(action).item())
-            actions.append(action.item())
-
-        return actions, log_probs
+        return actions, log_prob
 
     def evaluate(self, states, actions):
 
         # concatenate the states of both agents
         joint_states = states.view(states.shape[0], -1)
-        # get the values for the states from the critic
+        # get the state values from the critic and remove the last dimension
         V = self.critic(joint_states).squeeze()
-        # repeat the values to match the shape of the returns
-        V = V.repeat_interleave(2)
 
-        # flatten the second dimension of the states
-        states = states.view(-1, self.input_dim)
-
-        # get the action logits from the actor
+        # get the state values and log probabilities of the actions
         logits = self.actor(states)
-        # create a categorical distribution from the logits
         dist = Categorical(logits=logits)
-        # get the log probabilities of the actions
+
         log_probs = dist.log_prob(actions)
 
         return V, log_probs
 
     def gae(self, rewards, V, dones):
         advantages = []
-        returns = []
-        # add a zero at the end for the the terminal state
-        values = torch.cat([V, torch.zeros(1).to(self.device)], dim=0).detach()
+        expected_returns = []
+
         gae = 0
         for t in reversed(range(len(rewards))):
-            # if the state is terminal next_value is 0
-            next_value = values[t + 1] * (1 - dones[t])
-            delta = rewards[t] + self.gamma * next_value - values[t]
+            if t == len(rewards) - 1:
+                next_value = 0
+            else:
+                next_value = V[t + 1].detach() * (1 - dones[t])
+
+            expected_return = rewards[t] + self.gamma * next_value
+            delta = expected_return - V[t].detach()
             gae = delta + self.gamma * gae
             advantages.insert(0, gae)
+            expected_returns.append(expected_return)
 
-        advantages = torch.FloatTensor(advantages).to(self.device)
-        returns = advantages + V.detach()
 
-        return advantages, returns
+        advantages = torch.stack(advantages).to(self.device)
+        expected_returns = torch.stack(expected_returns).to(self.device)
+
+        
+        return advantages, expected_returns
