@@ -11,8 +11,7 @@ class PPOAgent:
     def __init__(
         self,
         env,
-        batch_steps=2048,
-        episode_steps=400,
+        batch_eps=6, 
         it_updates=10,
         gamma=0.95,
         eps=0.2,
@@ -37,23 +36,23 @@ class PPOAgent:
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=lr)
 
         # PPO hyperparameters
-        self.batch_steps = batch_steps
-        self.episode_steps = episode_steps
+        self.batch_eps = batch_eps
+        self.episode_steps = self.env.base_env.horizon
         self.it_updates = it_updates
         self.gamma = gamma
         self.eps = eps
 
-    def learn(self, total_timesteps=400000):
-        current_step = 0
+    def learn(self, total_episodes=1000):
+        current_ep = 0
         current_it = 0
 
-        self.pbar = tqdm(total=total_timesteps, desc="PPO Training", unit="step")
+        pbar = tqdm(total=total_episodes, desc="PPO Training", unit="step")
 
-        while current_step < total_timesteps:
+        while current_ep < total_episodes:
             # run the environment for a number of steps
             states, actions, log_probs_old, rewards, dones = self.trajectories()
 
-            current_step += states.shape[0]
+            current_ep += len(states) // self.episode_steps
             current_it += 1
 
             V, _ = self.evaluate(states, actions)
@@ -87,8 +86,21 @@ class PPOAgent:
                 self.critic_optimizer.zero_grad()
                 critic_loss.backward()
                 self.critic_optimizer.step()
+            
+            # update the progress bar
+            pbar.update(self.batch_eps)
 
     def trajectories(self):
+        """build the batch for the current ppo iteration
+
+        Returns:
+            states (torch.Tensor): the observations of both agents
+            actions (torch.Tensor): the actions taken by both agents
+            log_probs (torch.Tensor): the log probabilities of the actions
+            rewards (torch.Tensor): the rewards received by both agents
+            dones (torch.Tensor): the done flags for both agents
+        """
+        
         # TODO: implement better memory
         states = []
         actions = []
@@ -97,16 +109,15 @@ class PPOAgent:
         dones = []
         ep_rewards = []
 
-        t = 0
-        while t < self.batch_steps:
+        for _ in range(self.batch_eps):
+
             # reset the environment
             obs = self.env.reset()
             done = False
             ep_reward = 0
 
-            # run an episode until complete
+            # run the episode until complete
             while not done:
-                t += 1
 
                 # get the observations of both agents
                 obs = obs["both_agent_obs"]
@@ -125,15 +136,12 @@ class PPOAgent:
                 shaped_rewards = torch.FloatTensor(info["shaped_r_by_agent"])\
                     .to(self.device)
                 shaped_rewards += reward
-                ep_reward += shaped_rewards
+                ep_reward += shaped_rewards.sum().item()
 
                 rewards.append(shaped_rewards)
                 dones.append(done)
 
             ep_rewards.append(ep_reward)
-
-        # update the progress bar
-        self.pbar.update(t)
 
         # convert the lists to tensors
         states = torch.FloatTensor(np.array(states)).to(self.device)
@@ -141,8 +149,7 @@ class PPOAgent:
         log_probs = torch.stack(log_probs).to(self.device)
         rewards = torch.stack(rewards).to(self.device)
         dones = torch.FloatTensor(dones).to(self.device)
-
-        print(f"average episode reward: {np.mean(ep_rewards)}")
+        print(f"average episode reward: {np.mean(ep_rewards):.2f}")
 
         return states, actions, log_probs, rewards, dones
 
