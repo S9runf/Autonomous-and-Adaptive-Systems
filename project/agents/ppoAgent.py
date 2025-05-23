@@ -8,17 +8,16 @@ from models.actor_critic import ActorCritic
 from tqdm import tqdm
 
 class PPOAgent:
-
     def __init__(
-    self,
-    env, 
-    batch_steps=2048, 
-    episode_steps=400, 
-    it_updates=10, 
-    gamma=0.95,
-    eps=0.2,
-    lr=1e-3
-  ):
+        self,
+        env,
+        batch_steps=2048,
+        episode_steps=400,
+        it_updates=10,
+        gamma=0.95,
+        eps=0.2,
+        lr=1e-3,
+    ):
         self.device = torch.device("cpu")
 
         # environment parameters
@@ -59,7 +58,7 @@ class PPOAgent:
 
             V, _ = self.evaluate(states, actions)
 
-            # calculate the advantages
+            # compute the advantages
             adv, expected_returns = self.gae(rewards, V, dones)
             # normalize the advantages
             adv = (adv - adv.mean()) / (adv.std() + 1e-10)
@@ -68,17 +67,15 @@ class PPOAgent:
                 # get the new state values and log probabilities
                 V, log_probs = self.evaluate(states, actions)
 
-                # calculate the ratio of the new and old probabilities
+                # compute the ratio (pi_theta / pi_theta_old)
                 ratios = torch.exp(log_probs - log_probs_old)
 
-                # calculate the surrogate loss
+                # compute the surrogate loss
                 unclipped = ratios * adv
                 clipped = torch.clamp(ratios, 1 - self.eps, 1 + self.eps) * adv
 
-                # calculate the actor loss
                 actor_loss = -torch.min(unclipped, clipped).mean()
-                # calculate the critic loss
-                V = V.unsqueeze(1)
+                V = V.unsqueeze(1).repeat(1, 2)
                 critic_loss = nn.MSELoss()(V, expected_returns)
 
                 # update the actor and critic networks
@@ -124,16 +121,15 @@ class PPOAgent:
 
                 obs, reward, done, info = self.env.step(actions_t.tolist())
 
-
                 # add shaped rewards to the episode reward
                 shaped_rewards = torch.FloatTensor(info["shaped_r_by_agent"])\
                     .to(self.device)
                 shaped_rewards += reward
-                ep_reward += reward + shaped_rewards.sum()
+                ep_reward += shaped_rewards
 
                 rewards.append(shaped_rewards)
                 dones.append(done)
-            
+
             ep_rewards.append(ep_reward)
 
         # update the progress bar
@@ -195,9 +191,7 @@ class PPOAgent:
             advantages.insert(0, gae)
             expected_returns.append(expected_return)
 
-
         advantages = torch.stack(advantages).to(self.device)
         expected_returns = torch.stack(expected_returns).to(self.device)
 
-        
         return advantages, expected_returns
