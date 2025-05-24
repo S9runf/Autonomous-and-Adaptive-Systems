@@ -15,6 +15,7 @@ class PPOAgent:
         it_updates=10,
         gamma=0.95,
         eps=0.2,
+        lam=1,
         lr=1e-3,
     ):
         self.device = torch.device("cpu")
@@ -41,26 +42,31 @@ class PPOAgent:
         self.it_updates = it_updates
         self.gamma = gamma
         self.eps = eps
+        self.lam = lam
 
     def learn(self, total_episodes=1000):
         current_ep = 0
         current_it = 0
 
+        mean_rewards = []
+        actor_losses = []
+        critic_losses = []
+
         pbar = tqdm(total=total_episodes, desc="PPO Training", unit="step")
 
         while current_ep < total_episodes:
             # run the environment for a number of steps
-            states, actions, log_probs_old, rewards, dones = self.trajectories()
+            states, actions, log_probs_old, rewards, dones, mean_reward = self.trajectories()
 
-            current_ep += len(states) // self.episode_steps
+            current_ep += self.batch_eps
             current_it += 1
 
             V, _ = self.evaluate(states, actions)
 
             # compute the advantages
             adv, expected_returns = self.gae(rewards, V, dones)
-            # normalize the advantages
-            adv = (adv - adv.mean()) / (adv.std() + 1e-10)
+            
+            adv = (adv - adv.mean(dim=0)) / (adv.std(dim=0) + 1e-10)
 
             for _ in range(self.it_updates):
                 # get the new state values and log probabilities
@@ -74,8 +80,14 @@ class PPOAgent:
                 clipped = torch.clamp(ratios, 1 - self.eps, 1 + self.eps) * adv
 
                 actor_loss = -torch.min(unclipped, clipped).mean()
+
                 V = V.unsqueeze(1).repeat(1, 2)
+                
                 critic_loss = nn.MSELoss()(V, expected_returns)
+
+                # log the losses and rewards
+                actor_losses.append(actor_loss.item())
+                critic_losses.append(critic_loss.item())
 
                 # update the actor and critic networks
                 self.actor_optimizer.zero_grad()
@@ -86,9 +98,15 @@ class PPOAgent:
                 self.critic_optimizer.zero_grad()
                 critic_loss.backward()
                 self.critic_optimizer.step()
+                 
+
+            mean_rewards.append(mean_reward)
             
             # update the progress bar
             pbar.update(self.batch_eps)
+            pbar.set_postfix({"mean reward": f"{mean_reward:.2f}"})
+        
+        return actor_losses, critic_losses, mean_rewards
 
     def trajectories(self):
         """build the batch for the current ppo iteration
@@ -133,12 +151,10 @@ class PPOAgent:
                 obs, reward, done, info = self.env.step(actions_t.tolist())
 
                 # add shaped rewards to the episode reward
-                shaped_rewards = torch.FloatTensor(info["shaped_r_by_agent"])\
-                    .to(self.device)
-                shaped_rewards += reward
-                ep_reward += shaped_rewards.sum().item()
+                reward += torch.FloatTensor(info["shaped_r_by_agent"])
+                ep_reward += reward.sum().item()
 
-                rewards.append(shaped_rewards)
+                rewards.append(reward)
                 dones.append(done)
 
             ep_rewards.append(ep_reward)
@@ -149,9 +165,9 @@ class PPOAgent:
         log_probs = torch.stack(log_probs).to(self.device)
         rewards = torch.stack(rewards).to(self.device)
         dones = torch.FloatTensor(dones).to(self.device)
-        print(f"average episode reward: {np.mean(ep_rewards):.2f}")
+        mean_reward = np.mean(ep_rewards)
 
-        return states, actions, log_probs, rewards, dones
+        return states, actions, log_probs, rewards, dones, mean_reward
 
     def get_actions(self, obs):
         # convert the observations to a tensor
@@ -194,7 +210,7 @@ class PPOAgent:
 
             expected_return = rewards[t] + self.gamma * next_value
             delta = expected_return - V[t].detach()
-            gae = delta + self.gamma * gae
+            gae = delta + self.gamma * self.lam * gae
             advantages.insert(0, gae)
             expected_returns.append(expected_return)
 
