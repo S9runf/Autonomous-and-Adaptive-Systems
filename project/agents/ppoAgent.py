@@ -66,7 +66,7 @@ class PPOAgent:
             # compute the advantages
             adv, expected_returns = self.gae(rewards, V, dones)
             
-            adv = (adv - adv.mean(dim=0)) / (adv.std(dim=0) + 1e-10)
+            adv = (adv - adv.mean()) / (adv.std() + 1e-10)
 
             for _ in range(self.it_updates):
                 # get the new state values and log probabilities
@@ -81,9 +81,7 @@ class PPOAgent:
 
                 actor_loss = -torch.min(unclipped, clipped).mean()
 
-                V = V.unsqueeze(1).repeat(1, 2)
-                
-                critic_loss = nn.MSELoss()(V, expected_returns)
+                critic_loss = torch.mean((V.unsqueeze(1) - expected_returns) ** 2)
 
                 # log the losses and rewards
                 actor_losses.append(actor_loss.item())
@@ -98,7 +96,6 @@ class PPOAgent:
                 self.critic_optimizer.zero_grad()
                 critic_loss.backward()
                 self.critic_optimizer.step()
-                 
 
             mean_rewards.append(mean_reward)
             
