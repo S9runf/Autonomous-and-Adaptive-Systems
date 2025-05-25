@@ -11,12 +11,12 @@ class PPOAgent:
     def __init__(
         self,
         env,
-        batch_eps=6, 
-        it_updates=10,
+        batch_eps=10, 
+        it_updates=12,
         gamma=0.95,
         eps=0.2,
         lam=1,
-        lr=1e-3,
+        lr=8e-4,
     ):
         self.device = torch.device("cpu")
 
@@ -44,7 +44,7 @@ class PPOAgent:
         self.eps = eps
         self.lam = lam
 
-    def learn(self, total_episodes=1000):
+    def learn(self, total_episodes=1500):
         current_ep = 0
         current_it = 0
 
