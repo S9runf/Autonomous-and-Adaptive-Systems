@@ -7,165 +7,95 @@ from models.actor_critic import ActorCritic
 
 from tqdm import tqdm
 
+class Memory:
+    def __init__(self):
+        self.states = []
+        self.actions = []
+        self.log_probs = []
+        self.rewards = []
+        self.dones = []
+        self.mean_reward = 0
+
+    def clear(self):
+        self.states.clear()
+        self.actions.clear()
+        self.log_probs.clear()
+        self.rewards.clear()
+        self.dones.clear()
+
+    def store(self, state, action, log_prob, reward, done):
+        self.states.append(state)
+        self.actions.append(action)
+        self.log_probs.append(log_prob)
+        self.rewards.append(reward)
+        self.dones.append(done)
+
+   
+    def get_batch(self):
+        states = torch.FloatTensor(np.array(self.states))
+        actions = torch.LongTensor(np.array(self.actions))
+        log_probs = torch.FloatTensor(np.array(self.log_probs))
+        rewards = torch.FloatTensor(np.array(self.rewards))
+        dones = torch.FloatTensor(np.array(self.dones))
+
+        return states, actions, log_probs, rewards, dones
+
 class PPOAgent:
     def __init__(
         self,
-        env,
-        batch_eps=10, 
+        input_dim,
+        action_dim,
         it_updates=12,
-        gamma=0.95,
         eps=0.2,
-        lam=1,
         lr=8e-4,
     ):
         self.device = torch.device("cpu")
-
-        # environment parameters
-        self.env = env
-        self.input_dim = env.observation_space.shape[0]
-        self.action_dim = env.action_space.n
+        self.memory = Memory()
 
         # create the actor and critic networks
-        self.actor = ActorCritic(self.input_dim, self.action_dim)\
-            .to(self.device)
+        self.actor = ActorCritic(input_dim, action_dim).to(self.device)
         # critic takes the observations of both agents as input
-        self.critic = ActorCritic(2 * self.input_dim, 1)\
-            .to(self.device)
+        self.critic = ActorCritic(2 * input_dim, 1).to(self.device)
 
         # define the optimizers
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr)
         self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=lr)
 
         # PPO hyperparameters
-        self.batch_eps = batch_eps
-        self.episode_steps = self.env.base_env.horizon
         self.it_updates = it_updates
-        self.gamma = gamma
         self.eps = eps
-        self.lam = lam
 
-    def learn(self, total_episodes=1500):
-        current_ep = 0
-        current_it = 0
-
-        mean_rewards = []
-        actor_losses = []
-        critic_losses = []
-
-        pbar = tqdm(total=total_episodes, desc="PPO Training", unit="step")
-
-        while current_ep < total_episodes:
-            # run the environment for a number of steps
-            states, actions, log_probs_old, rewards, dones, mean_reward = self.trajectories()
-
-            current_ep += self.batch_eps
-            current_it += 1
-
-            V, _ = self.evaluate(states, actions)
-
-            # compute the advantages
-            adv, expected_returns = self.gae(rewards, V, dones)
-            
-            adv = (adv - adv.mean()) / (adv.std() + 1e-10)
-
-            for _ in range(self.it_updates):
-                # get the new state values and log probabilities
-                V, log_probs = self.evaluate(states, actions)
-
-                # compute the ratio (pi_theta / pi_theta_old)
-                ratios = torch.exp(log_probs - log_probs_old)
-
-                # compute the surrogate loss
-                unclipped = ratios * adv
-                clipped = torch.clamp(ratios, 1 - self.eps, 1 + self.eps) * adv
-
-                actor_loss = -torch.min(unclipped, clipped).mean()
-
-                critic_loss = torch.mean((V.unsqueeze(1) - expected_returns) ** 2)
-
-                # log the losses and rewards
-                actor_losses.append(actor_loss.item())
-                critic_losses.append(critic_loss.item())
-
-                # update the actor and critic networks
-                self.actor_optimizer.zero_grad()
-                # keep the graph to allow backpropagation through the critic
-                actor_loss.backward(retain_graph=True)
-                self.actor_optimizer.step()
-
-                self.critic_optimizer.zero_grad()
-                critic_loss.backward()
-                self.critic_optimizer.step()
-
-            mean_rewards.append(mean_reward)
-            
-            # update the progress bar
-            pbar.update(self.batch_eps)
-            pbar.set_postfix({"mean reward": f"{mean_reward:.2f}"})
+    def learn(self, states, actions, log_probs_old, adv, expected_returns):
         
-        return actor_losses, critic_losses, mean_rewards
+        for _ in range(self.it_updates):
+            # get the new state values and log probabilities
+            V, log_probs = self.evaluate(states, actions)
 
-    def trajectories(self):
-        """build the batch for the current ppo iteration
+            # compute the ratio (pi_theta / pi_theta_old)
+            ratios = torch.exp(log_probs - log_probs_old)
 
-        Returns:
-            states (torch.Tensor): the observations of both agents
-            actions (torch.Tensor): the actions taken by both agents
-            log_probs (torch.Tensor): the log probabilities of the actions
-            rewards (torch.Tensor): the rewards received by both agents
-            dones (torch.Tensor): the done flags for both agents
-        """
+            # compute the surrogate loss
+            unclipped = ratios * adv
+            clipped = torch.clamp(ratios, 1 - self.eps, 1 + self.eps) * adv
+
+            actor_loss = -torch.min(unclipped, clipped).mean()
+
+            critic_loss = torch.mean((V.unsqueeze(1) - expected_returns) ** 2)
+
+            # update the actor and critic networks
+            self.actor_optimizer.zero_grad()
+            # keep the graph to allow backpropagation through the critic
+            actor_loss.backward(retain_graph=True)
+            self.actor_optimizer.step()
+
+            self.critic_optimizer.zero_grad()
+            critic_loss.backward()
+            self.critic_optimizer.step()
         
-        # TODO: implement better memory
-        states = []
-        actions = []
-        log_probs = []
-        rewards = []
-        dones = []
-        ep_rewards = []
+        return actor_loss.item(), critic_loss.item()
 
-        for _ in range(self.batch_eps):
-
-            # reset the environment
-            obs = self.env.reset()
-            done = False
-            ep_reward = 0
-
-            # run the episode until complete
-            while not done:
-
-                # get the observations of both agents
-                obs = obs["both_agent_obs"]
-
-                states.append(obs)
-
-                with torch.no_grad():
-                    actions_t, log_probs_t = self.get_actions(obs)
-
-                actions.append(actions_t)
-                log_probs.append(log_probs_t)
-
-                obs, reward, done, info = self.env.step(actions_t.tolist())
-
-                # add shaped rewards to the episode reward
-                reward += torch.FloatTensor(info["shaped_r_by_agent"])
-                ep_reward += reward.sum().item()
-
-                rewards.append(reward)
-                dones.append(done)
-
-            ep_rewards.append(ep_reward)
-
-        # convert the lists to tensors
-        states = torch.FloatTensor(np.array(states)).to(self.device)
-        actions = torch.stack(actions).to(self.device)
-        log_probs = torch.stack(log_probs).to(self.device)
-        rewards = torch.stack(rewards).to(self.device)
-        dones = torch.FloatTensor(dones).to(self.device)
-        mean_reward = np.mean(ep_rewards)
-
-        return states, actions, log_probs, rewards, dones, mean_reward
-
+    # inference function, no gradients needed
+    @torch.no_grad()
     def get_actions(self, obs):
         # convert the observations to a tensor
         states = torch.FloatTensor(np.array(obs)).to(self.device)
@@ -194,24 +124,4 @@ class PPOAgent:
 
         return V, log_probs
 
-    def gae(self, rewards, V, dones):
-        advantages = []
-        expected_returns = []
-
-        gae = 0
-        for t in reversed(range(len(rewards))):
-            if t == len(rewards) - 1:
-                next_value = 0
-            else:
-                next_value = V[t + 1].detach() * (1 - dones[t])
-
-            expected_return = rewards[t] + self.gamma * next_value
-            delta = expected_return - V[t].detach()
-            gae = delta + self.gamma * self.lam * gae
-            advantages.insert(0, gae)
-            expected_returns.append(expected_return)
-
-        advantages = torch.stack(advantages).to(self.device)
-        expected_returns = torch.stack(expected_returns).to(self.device)
-
-        return advantages, expected_returns
+    
