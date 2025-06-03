@@ -10,13 +10,14 @@ from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld
 from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv, Overcooked
 
 from agents.ppoAgent import PPOAgent
+from utils import make_env
 
 class AgentTrainer: 
 
     def __init__(
         self,
         agent,
-        layouts: str | list,
+        layouts: str | list[str],
         batch_eps=10,
         gamma=0.95,
         lam=1
@@ -31,7 +32,7 @@ class AgentTrainer:
         
 
         if isinstance(self.layouts, str):
-            self.env = self.make_env(self.layouts)
+            self.env = make_env(self.layouts)
 
         self.states = []
         self.actions = []
@@ -40,19 +41,6 @@ class AgentTrainer:
         self.dones = []
 
         self.mean_reward = 0
-
-    def make_env(self, layout_name):
-
-        base_mdp = OvercookedGridworld.from_layout_name(
-            layout_name,
-            old_dynamics=True
-        )
-        base_env = OvercookedEnv.from_mdp(base_mdp, horizon=400, info_level=0)
-
-        return Overcooked(
-            base_env=base_env,
-            featurize_fn=base_env.featurize_state_mdp
-        )
 
     def store(self, state, action, log_prob, reward, done):
         """ Store a single transition in the trajectory """
@@ -77,7 +65,7 @@ class AgentTrainer:
 
         layout_name = random.choice(self.layouts)
 
-        return self.make_env(layout_name)
+        return make_env(layout_name)
 
     def get_trajectories(self):
         """ Collect a batch of trajectories by running the agent in the environment """
@@ -105,7 +93,7 @@ class AgentTrainer:
 
                 actions, log_probs = self.agent.get_actions(state)
 
-                next_obs, reward, done, info = self.env.step(actions.tolist())
+                next_obs, reward, done, info = env.step(actions.tolist())
 
                 shaped_rewards = torch.FloatTensor(info["shaped_r_by_agent"])
 
@@ -183,7 +171,7 @@ class AgentTrainer:
         torch.save(self.agent.actor.state_dict(), f"{current_dir}/weights/{layout}_ppo.pth")
         torch.save(self.agent.critic.state_dict(), f"{current_dir}/weights/{layout}_critic_ppo.pth")
 
-        print("Models saved.")
+        print(f"Models saved in {current_dir}/weights/{layout}_ppo.pth")
 
     def train(self, total_episodes=1000):
         """ Train the agent for the specified number of episodes """
@@ -230,24 +218,21 @@ class AgentTrainer:
             pbar.set_postfix({"mean_reward": self.mean_reward})
 
         self.plot_results(actor_losses, critic_losses, mean_rewards)
-        self.save_models(self.layouts)
+        if isinstance(self.layouts, str):
+            self.save_models(self.layouts)
+        else:
+            self.save_models("generalized")
 
 
 if __name__ == "__main__":
 
-    base_mdp = OvercookedGridworld.from_layout_name(
-        "cramped_room",
-        old_dynamics=True
-    )
-    base_env = OvercookedEnv.from_mdp(base_mdp, horizon=400, info_level=0)
-    
-    dummy_env = gym.make("Overcooked-v0", base_env=base_env, featurize_fn=base_env.featurize_state_mdp)
-
+    dummy_env = make_env("cramped_room")
     input_dim = dummy_env.observation_space.shape[0]
     action_dim = dummy_env.action_space.n
+    layouts = ["cramped_room", "coordination_ring", "asymmetric_advantages"]
 
     agent = PPOAgent(input_dim=input_dim, action_dim=action_dim)
-    
-    trainer = AgentTrainer(agent, layouts="cramped_room")
+
+    trainer = AgentTrainer(agent, layouts=layouts)
 
     trainer.train(total_episodes=1000)
