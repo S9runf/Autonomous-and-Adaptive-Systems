@@ -4,10 +4,6 @@ import random
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-import gymnasium as gym
-
-from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld
-from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv, Overcooked
 
 from agents.ppoAgent import PPOAgent
 from utils import make_env
@@ -29,7 +25,6 @@ class AgentTrainer:
         self.gamma = gamma
         self.lam = lam
         self.env = None
-        
 
         if isinstance(self.layouts, str):
             self.env = make_env(self.layouts)
@@ -129,7 +124,6 @@ class AgentTrainer:
             advantages.insert(0, gae)
             returns.insert(0, expected_return)
 
-
         advantages = torch.stack(advantages).to(self.device)
         returns = torch.stack(returns).to(self.device)
 
@@ -213,7 +207,6 @@ class AgentTrainer:
             actor_losses.append(losses[0])
             critic_losses.append(losses[1])
             mean_rewards.append(self.mean_reward)
-
             pbar.update(self.batch_eps)
             pbar.set_postfix({"mean_reward": self.mean_reward})
 

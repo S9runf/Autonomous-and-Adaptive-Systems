@@ -3,9 +3,10 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Categorical
 import numpy as np
-from models.actor_critic import ActorCritic
+from models.feed_forward import FeedForward
 
 from tqdm import tqdm
+
 
 class Memory:
     def __init__(self):
@@ -30,7 +31,6 @@ class Memory:
         self.rewards.append(reward)
         self.dones.append(done)
 
-   
     def get_batch(self):
         states = torch.FloatTensor(np.array(self.states))
         actions = torch.LongTensor(np.array(self.actions))
@@ -39,6 +39,7 @@ class Memory:
         dones = torch.FloatTensor(np.array(self.dones))
 
         return states, actions, log_probs, rewards, dones
+
 
 class PPOAgent:
     def __init__(
@@ -53,9 +54,9 @@ class PPOAgent:
         self.memory = Memory()
 
         # create the actor and critic networks
-        self.actor = ActorCritic(input_dim, action_dim).to(self.device)
+        self.actor = FeedForward(input_dim, action_dim).to(self.device)
         # critic takes the observations of both agents as input
-        self.critic = ActorCritic(2 * input_dim, 1).to(self.device)
+        self.critic = FeedForward(2 * input_dim, 1).to(self.device)
 
         # define the optimizers
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr)
@@ -66,7 +67,7 @@ class PPOAgent:
         self.eps = eps
 
     def learn(self, states, actions, log_probs_old, adv, expected_returns):
-        
+
         for _ in range(self.it_updates):
             # get the new state values and log probabilities
             V, log_probs = self.evaluate(states, actions)
@@ -91,7 +92,7 @@ class PPOAgent:
             self.critic_optimizer.zero_grad()
             critic_loss.backward()
             self.critic_optimizer.step()
-        
+
         return actor_loss.item(), critic_loss.item()
 
     # inference function, no gradients needed
@@ -117,11 +118,11 @@ class PPOAgent:
         V = self.critic(joint_states).squeeze()
 
         # get the state values and log probabilities of the actions
-        logits = self.actor(states)
+        states_batch = states.view(-1, states.shape[-1])
+        logits = self.actor(states_batch)
+        logits = logits.view(-1, actions.shape[-1], logits.shape[-1])
         dist = Categorical(logits=logits)
 
         log_probs = dist.log_prob(actions)
 
         return V, log_probs
-
-    

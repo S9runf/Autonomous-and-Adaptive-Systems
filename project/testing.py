@@ -4,11 +4,10 @@ import os
 import pygame
 import gymnasium as gym
 
-from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv, Overcooked
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld
 from overcooked_ai_py.visualization.state_visualizer import StateVisualizer
 
-from models.actor_critic import ActorCritic
+from models.feed_forward import FeedForward
 from utils import make_env
 
 
@@ -27,11 +26,10 @@ class Tester:
         self.frame_duration = 1000 // frame_rate
         self.device = torch.device("cpu")
 
-
         # Set up dummy environment to get observation and action spaces
         dummy_env = make_env("cramped_room")
 
-        self.policy = ActorCritic(
+        self.policy = FeedForward(
             dummy_env.observation_space.shape[0],
             dummy_env.action_space.n
         )
@@ -92,7 +90,7 @@ class Tester:
         print(f"Average Soup Count for {layout}: {avg_soup}")
 
         return avg_reward, avg_soup
-    
+
     def test(self, num_episodes: int = 100):
         results = {}
 
@@ -149,7 +147,9 @@ class Tester:
         for layout in self.layouts:
 
             trajectory, hud, reward, soups = self.collect_trajectory(layout)
-            print(f"Rendering: Layout: {layout} - Final Reward: {reward} - Soup Count: {soups}")
+            print(
+                f"Rendering: Layout: {layout} - Final Reward: {reward} - Soup Count: {soups}"
+            )
 
             base_mdp = OvercookedGridworld.from_layout_name(
                 layout,
@@ -192,8 +192,8 @@ class Tester:
                     frame_count += 1
                     if frame_count < len(frames):
                         frame = frames[frame_count]
-                    # wait for 2 seconds after the last frame before quitting    
-                    elif (frame_count >= len(frames) + self.frame_rate * 2):
+                    # wait for 2 seconds after the last frame before quitting
+                    elif frame_count >= len(frames) + self.frame_rate * 2:
                         running = False
 
         pygame.quit()
