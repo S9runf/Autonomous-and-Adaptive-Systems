@@ -5,42 +5,6 @@ from torch.distributions import Categorical
 import numpy as np
 from models.feed_forward import FeedForward
 
-from tqdm import tqdm
-
-
-class Memory:
-    def __init__(self):
-        self.states = []
-        self.actions = []
-        self.log_probs = []
-        self.rewards = []
-        self.dones = []
-        self.mean_reward = 0
-
-    def clear(self):
-        self.states.clear()
-        self.actions.clear()
-        self.log_probs.clear()
-        self.rewards.clear()
-        self.dones.clear()
-
-    def store(self, state, action, log_prob, reward, done):
-        self.states.append(state)
-        self.actions.append(action)
-        self.log_probs.append(log_prob)
-        self.rewards.append(reward)
-        self.dones.append(done)
-
-    def get_batch(self):
-        states = torch.FloatTensor(np.array(self.states))
-        actions = torch.LongTensor(np.array(self.actions))
-        log_probs = torch.FloatTensor(np.array(self.log_probs))
-        rewards = torch.FloatTensor(np.array(self.rewards))
-        dones = torch.FloatTensor(np.array(self.dones))
-
-        return states, actions, log_probs, rewards, dones
-
-
 class PPOAgent:
     def __init__(
         self,
@@ -51,7 +15,6 @@ class PPOAgent:
         lr=8e-4,
     ):
         self.device = torch.device("cpu")
-        self.memory = Memory()
 
         # create the actor and critic networks
         self.actor = FeedForward(input_dim, action_dim).to(self.device)

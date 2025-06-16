@@ -91,7 +91,7 @@ class Tester:
 
         return avg_reward, avg_soup
 
-    def test(self, num_episodes: int = 100):
+    def test(self, num_episodes=100):
         results = {}
 
         for layout in self.layouts:
@@ -203,9 +203,9 @@ if __name__ == "__main__":
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
 
-    path = f"{current_dir}/weights/generalized_ppo.pth"
+    path = f"{current_dir}/weights/asymmetric_advantages_ppo.pth"
 
-    layouts = ["cramped_room", "coordination_ring", "asymmetric_advantages"]
+    layouts = "asymmetric_advantages"
 
     # Example usage
     tester = Tester(layouts=layouts, model_path=path, frame_rate=10)

@@ -1,3 +1,4 @@
+import math
 import torch
 import os
 import random
@@ -79,6 +80,7 @@ class AgentTrainer:
             obs = env.reset()
             done = False
             ep_reward = 0
+            self.current_episode += 1
 
             # run the episode until complete
             while not done:
@@ -86,14 +88,34 @@ class AgentTrainer:
                 # get the observations of both agents
                 state = obs["both_agent_obs"]
 
+                # get the index of the second agent
+                other_agent_idx = obs["other_agent_env_idx"]
+
+                # if the agents are inverted
+                # flip the observations to match the expected order of actions
+                if other_agent_idx == 0:
+                    state = (state[1], state[0])
+
                 actions, log_probs = self.agent.get_actions(state)
+
 
                 next_obs, reward, done, info = env.step(actions.tolist())
 
-                shaped_rewards = torch.FloatTensor(info["shaped_r_by_agent"])
+                shaped_rewards = info["shaped_r_by_agent"]
+                # flip the shaped rewards if the agents are inverted
+                # as the library does not handle this automatically
+                if other_agent_idx == 0:
+                    shaped_rewards = (shaped_rewards[1], shaped_rewards[0])
 
+                # convert the shaped rewards to a tensor
+                shaped_rewards = torch.FloatTensor(shaped_rewards).to(self.device)
+
+                # Apply simple annealing to reward shaping
+                annealing = math.exp(-self.current_episode / 700)
+
+                shaped_rewards *= annealing
                 # keep track of the total episode reward for logging
-                ep_reward += reward + shaped_rewards.sum().item()
+                ep_reward += reward
 
                 # keep track of agent rewards separately for training
                 agent_rewards = reward + shaped_rewards
@@ -169,16 +191,16 @@ class AgentTrainer:
 
     def train(self, total_episodes=1000):
         """ Train the agent for the specified number of episodes """
-        current_episode = 0
+        self.current_episode = 0
         actor_losses = []
         critic_losses = []
         mean_rewards = []
 
         pbar = tqdm(total=total_episodes, desc="PPO Training", unit="step")
-        while current_episode < total_episodes:
+        while self.current_episode < total_episodes:
             # collect a batch of trajectories
             self.get_trajectories()
-            current_episode += self.batch_eps
+
 
             # convert the stored trajectories to tensors
             states = torch.FloatTensor(np.array(self.states)).to(self.device)
@@ -191,7 +213,7 @@ class AgentTrainer:
             V, _ = self.agent.evaluate(states, actions)
             adv, expected_returns = self.gae(rewards, V, dones)
 
-            # normalize the adv
+            # normalize the advantages
             adv = (adv - adv.mean()) / (adv.std() + 1e-10)
 
             # update the agent
@@ -222,7 +244,7 @@ if __name__ == "__main__":
     dummy_env = make_env("cramped_room")
     input_dim = dummy_env.observation_space.shape[0]
     action_dim = dummy_env.action_space.n
-    layouts = ["cramped_room", "coordination_ring", "asymmetric_advantages"]
+    layouts = "asymmetric_advantages"
 
     agent = PPOAgent(input_dim=input_dim, action_dim=action_dim)
 

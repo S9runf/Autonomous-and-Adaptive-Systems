@@ -1,6 +1,4 @@
-import torch
 import torch.nn as nn
-from torch.distributions import Categorical
 
 class FeedForward(nn.Module):
     def __init__(self, input_dim, output_dim, critic=False):
