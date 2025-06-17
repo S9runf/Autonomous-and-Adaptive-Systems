@@ -14,23 +14,26 @@ class AgentTrainer:
         self,
         agent,
         env,
+        layouts,
         batch_eps=10,
         gamma=0.95,
         lam=1
     ):
         self.device = torch.device("cpu")
         self.agent = agent
-        self.layouts = layouts
         self.batch_eps = batch_eps
         self.gamma = gamma
         self.lam = lam
         self.env = env
+        self.layouts = layouts
 
         self.states = []
         self.actions = []
         self.log_probs = []
         self.rewards = []
         self.dones = []
+
+        self.last_stage = False
 
         self.mean_reward = 0
 
@@ -94,9 +97,9 @@ class AgentTrainer:
                 shaped_rewards = torch.FloatTensor(shaped_rewards).to(self.device)
 
                 # Apply simple annealing to reward shaping
-                annealing = math.exp(-self.current_episode / 700)
-
+                annealing = math.exp(-self.current_episode / 600)
                 shaped_rewards *= annealing
+
                 # keep track of the total episode reward for logging
                 ep_reward += reward
 
@@ -181,6 +184,16 @@ class AgentTrainer:
 
         pbar = tqdm(total=total_episodes, desc="PPO Training", unit="step")
         while self.current_episode < total_episodes:
+            # change stage every 1000 episodes
+            if (
+                self.current_episode > 0 and
+                self.current_episode % 1000 == 0 and
+                not self.last_stage
+            ):
+                try:
+                    self.env.next_stage()
+                except IndexError:
+                    self.last_stage = True
             # collect a batch of trajectories
             self.get_trajectories()
 
@@ -219,14 +232,21 @@ class AgentTrainer:
         if len(self.layouts) > 1:
             self.save_models("generalized")
         else:
-            self.save_models(self.layouts)
+            self.save_models(self.layouts[0])
 
 
 if __name__ == "__main__":
-    layouts = ["asymmetric_advantages"]
+    layouts = [
+        "asymmetric_advantages",
+    ]
+    #curriculum = [
+    #    {"layouts": layouts[0:1]},
+    #    {"layouts": layouts[0:2]},
+    #    {"layouts": layouts},
+    #]
 
-    env = GeneralizedOvercooked(layouts)
-    
+    env = GeneralizedOvercooked(layouts=layouts)
+
     # get the last dimension of the observation space
     # this allows to handle different featurization methods if needed
     input_dim = env.observation_space.shape[-1]
@@ -234,6 +254,6 @@ if __name__ == "__main__":
 
     agent = PPOAgent(input_dim=input_dim, action_dim=action_dim)
 
-    trainer = AgentTrainer(agent, env)
+    trainer = AgentTrainer(agent, env, layouts=layouts)
 
-    trainer.train(total_episodes=1000)
+    trainer.train(total_episodes=2000)

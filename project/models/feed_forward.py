@@ -3,7 +3,6 @@ import torch.nn as nn
 class FeedForward(nn.Module):
     def __init__(self, input_dim, output_dim, critic=False):
         super().__init__()
-        self.max_distance = 5.0
         self.critic = critic
         self.shared = nn.Sequential(
             nn.Linear(input_dim, 128),
