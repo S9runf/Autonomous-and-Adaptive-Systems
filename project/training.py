@@ -1,20 +1,19 @@
 import math
 import torch
 import os
-import random
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 from agents.ppoAgent import PPOAgent
-from utils import make_env
+from utils import make_env, GeneralizedOvercooked
 
 class AgentTrainer: 
 
     def __init__(
         self,
         agent,
-        layouts: str | list[str],
+        env,
         batch_eps=10,
         gamma=0.95,
         lam=1
@@ -25,10 +24,7 @@ class AgentTrainer:
         self.batch_eps = batch_eps
         self.gamma = gamma
         self.lam = lam
-        self.env = None
-
-        if isinstance(self.layouts, str):
-            self.env = make_env(self.layouts)
+        self.env = env
 
         self.states = []
         self.actions = []
@@ -54,15 +50,6 @@ class AgentTrainer:
         self.rewards.clear()
         self.dones.clear()
 
-    def random_layout(self):
-        """ create an Overcooked environment with a random layout from the list of layouts """
-
-        assert len(self.layouts) > 0, "No layouts provided for the Overcooked environment."
-
-        layout_name = random.choice(self.layouts)
-
-        return make_env(layout_name)
-
     def get_trajectories(self):
         """ Collect a batch of trajectories by running the agent in the environment """
 
@@ -70,14 +57,10 @@ class AgentTrainer:
         self.clear_memory()
 
         total_rewards = []
-        env = self.env
         for ep in range(self.batch_eps):
-            if self.env is None:
-                # get a random layout for each episode
-                env = self.random_layout()
 
             # reset the environment
-            obs = env.reset()
+            obs = self.env.reset()
             done = False
             ep_reward = 0
             self.current_episode += 1
@@ -99,7 +82,7 @@ class AgentTrainer:
                 actions, log_probs = self.agent.get_actions(state)
 
 
-                next_obs, reward, done, info = env.step(actions.tolist())
+                next_obs, reward, done, info = self.env.step(actions.tolist())
 
                 shaped_rewards = info["shaped_r_by_agent"]
                 # flip the shaped rewards if the agents are inverted
@@ -233,21 +216,24 @@ class AgentTrainer:
             pbar.set_postfix({"mean_reward": self.mean_reward})
 
         self.plot_results(actor_losses, critic_losses, mean_rewards)
-        if isinstance(self.layouts, str):
-            self.save_models(self.layouts)
-        else:
+        if len(self.layouts) > 1:
             self.save_models("generalized")
+        else:
+            self.save_models(self.layouts)
 
 
 if __name__ == "__main__":
+    layouts = ["asymmetric_advantages"]
 
-    dummy_env = make_env("cramped_room")
-    input_dim = dummy_env.observation_space.shape[0]
-    action_dim = dummy_env.action_space.n
-    layouts = "asymmetric_advantages"
+    env = GeneralizedOvercooked(layouts)
+    
+    # get the last dimension of the observation space
+    # this allows to handle different featurization methods if needed
+    input_dim = env.observation_space.shape[-1]
+    action_dim = env.action_space.n
 
     agent = PPOAgent(input_dim=input_dim, action_dim=action_dim)
 
-    trainer = AgentTrainer(agent, layouts=layouts)
+    trainer = AgentTrainer(agent, env)
 
     trainer.train(total_episodes=1000)
