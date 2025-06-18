@@ -6,7 +6,7 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 from agents.ppoAgent import PPOAgent
-from utils import make_env, GeneralizedOvercooked
+from utils import GeneralizedOvercooked
 
 class AgentTrainer: 
 
@@ -17,7 +17,7 @@ class AgentTrainer:
         layouts,
         batch_eps=10,
         gamma=0.95,
-        lam=1
+        lam=0.99
     ):
         self.device = torch.device("cpu")
         self.agent = agent
@@ -77,28 +77,14 @@ class AgentTrainer:
                 # get the index of the second agent
                 other_agent_idx = obs["other_agent_env_idx"]
 
-                # if the agents are inverted
-                # flip the observations to match the expected order of actions
-                if other_agent_idx == 0:
-                    state = (state[1], state[0])
-
                 actions, log_probs = self.agent.get_actions(state)
-
 
                 next_obs, reward, done, info = self.env.step(actions.tolist())
 
                 shaped_rewards = info["shaped_r_by_agent"]
-                # flip the shaped rewards if the agents are inverted
-                # as the library does not handle this automatically
-                if other_agent_idx == 0:
-                    shaped_rewards = (shaped_rewards[1], shaped_rewards[0])
 
                 # convert the shaped rewards to a tensor
-                shaped_rewards = torch.FloatTensor(shaped_rewards).to(self.device)
-
-                # Apply simple annealing to reward shaping
-                annealing = math.exp(-self.current_episode / 600)
-                shaped_rewards *= annealing
+                shaped_rewards = 0.5 * torch.FloatTensor(shaped_rewards).to(self.device)
 
                 # keep track of the total episode reward for logging
                 ep_reward += reward
@@ -184,7 +170,8 @@ class AgentTrainer:
 
         pbar = tqdm(total=total_episodes, desc="PPO Training", unit="step")
         while self.current_episode < total_episodes:
-            # change stage every 1000 episodes
+            # TODO: decide if curriculum learning is needed
+            """  # change stage every 1000 episodes
             if (
                 self.current_episode > 0 and
                 self.current_episode % 1000 == 0 and
@@ -194,7 +181,7 @@ class AgentTrainer:
                     self.env.next_stage()
                 except IndexError:
                     self.last_stage = True
-            # collect a batch of trajectories
+            # collect a batch of trajectories """
             self.get_trajectories()
 
 
@@ -206,7 +193,7 @@ class AgentTrainer:
             dones = torch.FloatTensor(self.dones).to(self.device)
 
             # compute the advantages and expected returns
-            V, _ = self.agent.evaluate(states, actions)
+            V, _, _ = self.agent.evaluate(states, actions)
             adv, expected_returns = self.gae(rewards, V, dones)
 
             # normalize the advantages
@@ -237,13 +224,10 @@ class AgentTrainer:
 
 if __name__ == "__main__":
     layouts = [
+        "cramped_room",
         "asymmetric_advantages",
+        "coordination_ring"
     ]
-    #curriculum = [
-    #    {"layouts": layouts[0:1]},
-    #    {"layouts": layouts[0:2]},
-    #    {"layouts": layouts},
-    #]
 
     env = GeneralizedOvercooked(layouts=layouts)
 

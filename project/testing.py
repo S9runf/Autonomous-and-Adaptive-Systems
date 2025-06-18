@@ -30,7 +30,7 @@ class Tester:
         dummy_env = make_env("cramped_room")
 
         self.policy = FeedForward(
-            dummy_env.observation_space.shape[0],
+            dummy_env.observation_space.shape[-1],
             dummy_env.action_space.n
         )
         self.policy.load_state_dict(torch.load(model_path))
@@ -64,8 +64,9 @@ class Tester:
 
             # The environment will end automatically when horizon is reached
             while not done:
-                states = torch.FloatTensor(np.array(obs["both_agent_obs"]))\
-                    .to(self.device)
+                states = obs["both_agent_obs"]
+                states = torch.FloatTensor(np.array(states)).to(self.device)
+
                 logits = self.policy(states)
 
                 # Sample actions from the distribution
@@ -117,22 +118,26 @@ class Tester:
 
         trajectory = []
         hud = []
+        shaped_rewards = [0, 0]
 
         episode_reward = 0
         soup_count = 0
 
         while not done:
             trajectory.append(obs["overcooked_state"])
-            hud.append({"score": episode_reward, "soups": soup_count})
+            hud.append({"score": episode_reward, "soups": soup_count, "shaped_rewards": shaped_rewards})
 
-            states = torch.FloatTensor(np.array(obs["both_agent_obs"])).to(self.device)
+            states = obs["both_agent_obs"]
+            states = torch.FloatTensor(np.array(states)).to(self.device)
+
             logits = self.policy(states)
 
             # Sample actions from the distribution
             dist = torch.distributions.Categorical(logits=logits)
             actions = dist.sample().tolist()
 
-            obs, reward, done, _ = env.step(actions)
+            obs, reward, done, info = env.step(actions)
+            shaped_rewards = info["shaped_r_by_agent"]
 
             soup_count += reward // 20
             episode_reward += reward
@@ -203,9 +208,9 @@ if __name__ == "__main__":
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
 
-    path = f"{current_dir}/weights/asymmetric_advantages_ppo.pth"
+    path = f"{current_dir}/weights/generalized_ppo.pth"
 
-    layouts = "asymmetric_advantages"
+    layouts = ["cramped_room", "asymmetric_advantages", "coordination_ring", "simple_o"]
 
     # Example usage
     tester = Tester(layouts=layouts, model_path=path, frame_rate=10)

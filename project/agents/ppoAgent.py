@@ -33,7 +33,7 @@ class PPOAgent:
 
         for _ in range(self.it_updates):
             # get the new state values and log probabilities
-            V, log_probs = self.evaluate(states, actions)
+            V, log_probs, entropy = self.evaluate(states, actions)
 
             # compute the ratio (pi_theta / pi_theta_old)
             ratios = torch.exp(log_probs - log_probs_old)
@@ -42,7 +42,8 @@ class PPOAgent:
             unclipped = ratios * adv
             clipped = torch.clamp(ratios, 1 - self.eps, 1 + self.eps) * adv
 
-            actor_loss = -torch.min(unclipped, clipped).mean()
+            actor_loss = -torch.min(unclipped, clipped)
+            actor_loss = torch.mean(actor_loss)
 
             critic_loss = torch.mean((V.unsqueeze(1) - expected_returns) ** 2)
 
@@ -88,4 +89,4 @@ class PPOAgent:
 
         log_probs = dist.log_prob(actions)
 
-        return V, log_probs
+        return V, log_probs, dist.entropy()
