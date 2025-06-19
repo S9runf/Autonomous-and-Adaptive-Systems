@@ -29,11 +29,11 @@ class PPOAgent:
         self.it_updates = it_updates
         self.eps = eps
 
-    def learn(self, states, actions, log_probs_old, adv, expected_returns):
+    def learn(self, states, actions, log_probs_old, adv, expected_returns, random_agent_mask, joint_mask):
 
         for _ in range(self.it_updates):
             # get the new state values and log probabilities
-            V, log_probs, entropy = self.evaluate(states, actions)
+            V, log_probs, entropy = self.evaluate(states, actions, random_agent_mask)
 
             # compute the ratio (pi_theta / pi_theta_old)
             ratios = torch.exp(log_probs - log_probs_old)
@@ -44,6 +44,8 @@ class PPOAgent:
 
             actor_loss = -torch.min(unclipped, clipped)
             actor_loss = torch.mean(actor_loss)
+
+            V = V[joint_mask]
 
             critic_loss = torch.mean((V.unsqueeze(1) - expected_returns) ** 2)
 
@@ -74,17 +76,16 @@ class PPOAgent:
 
         return actions, log_prob
 
-    def evaluate(self, states, actions):
-
+    def evaluate(self, states, actions, random_agent_mask):
         # concatenate the states of both agents
         joint_states = states.view(states.shape[0], -1)
         # get the state values from the critic and remove the last dimension
         V = self.critic(joint_states).squeeze()
 
         # get the state values and log probabilities of the actions
-        states_batch = states.view(-1, states.shape[-1])
+        states_batch = states[random_agent_mask]
+        states_batch = states_batch.view(-1, states_batch.shape[-1])
         logits = self.actor(states_batch)
-        logits = logits.view(-1, actions.shape[-1], logits.shape[-1])
         dist = Categorical(logits=logits)
 
         log_probs = dist.log_prob(actions)

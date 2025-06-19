@@ -4,9 +4,11 @@ import os
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+import random
 
 from agents.ppoAgent import PPOAgent
 from utils import GeneralizedOvercooked
+
 
 class AgentTrainer: 
 
@@ -17,7 +19,8 @@ class AgentTrainer:
         layouts,
         batch_eps=10,
         gamma=0.95,
-        lam=0.99
+        lam=0.99,
+        random_agent_prob=0.2
     ):
         self.device = torch.device("cpu")
         self.agent = agent
@@ -26,6 +29,9 @@ class AgentTrainer:
         self.lam = lam
         self.env = env
         self.layouts = layouts
+        self.random_agent_prob = random_agent_prob
+        self.random_idx = None
+        self.random_agent_mask = []
 
         self.states = []
         self.actions = []
@@ -40,8 +46,11 @@ class AgentTrainer:
     def store(self, state, action, log_prob, reward, done):
         """ Store a single transition in the trajectory """
         self.states.append(state)
-        self.actions.append(action)
-        self.log_probs.append(log_prob)
+        for i in range(2):
+            if i != self.random_idx:
+                self.actions.append(action[i])
+                self.log_probs.append(log_prob[i])
+                
         self.rewards.append(reward)
         self.dones.append(done)
 
@@ -52,6 +61,7 @@ class AgentTrainer:
         self.log_probs.clear()
         self.rewards.clear()
         self.dones.clear()
+        self.random_agent_mask.clear()
 
     def get_trajectories(self):
         """ Collect a batch of trajectories by running the agent in the environment """
@@ -68,16 +78,31 @@ class AgentTrainer:
             ep_reward = 0
             self.current_episode += 1
 
+            self.random_idx = None
+            if random.random() < self.random_agent_prob:
+                self.random_idx = random.randint(0, 1)
+
             # run the episode until complete
             while not done:
+                # build a step-wise mask for the random agent
+                if self.random_idx is not None:
+                    self.random_agent_mask.append(
+                        [i != self.random_idx for i in range(2)]
+                    )
+                else:
+                    self.random_agent_mask.append([True, True])
 
                 # get the observations of both agents
                 state = obs["both_agent_obs"]
 
-                # get the index of the second agent
-                other_agent_idx = obs["other_agent_env_idx"]
-
                 actions, log_probs = self.agent.get_actions(state)
+
+                # if the agent is random,  choose a random action for the random agent
+                if self.random_idx is not None:
+                    # choose a random action for the random agent
+                    actions[self.random_idx] = random.randint(
+                        0, self.env.action_space.n - 1
+                    )
 
                 next_obs, reward, done, info = self.env.step(actions.tolist())
 
@@ -184,20 +209,26 @@ class AgentTrainer:
             # collect a batch of trajectories """
             self.get_trajectories()
 
-
             # convert the stored trajectories to tensors
             states = torch.FloatTensor(np.array(self.states)).to(self.device)
-            actions = torch.stack(self.actions).to(self.device)
+            actions = torch.LongTensor(self.actions).to(self.device)
             log_probs = torch.stack(self.log_probs).to(self.device)
             rewards = torch.stack(self.rewards).to(self.device)
             dones = torch.FloatTensor(self.dones).to(self.device)
+            random_agent_mask = torch.tensor(self.random_agent_mask).to(self.device)
 
             # compute the advantages and expected returns
-            V, _, _ = self.agent.evaluate(states, actions)
+            V, _, _ = self.agent.evaluate(states, actions,
+            random_agent_mask=random_agent_mask)
+
             adv, expected_returns = self.gae(rewards, V, dones)
+            adv = adv[random_agent_mask]
+            expected_returns = expected_returns[random_agent_mask]
 
             # normalize the advantages
             adv = (adv - adv.mean()) / (adv.std() + 1e-10)
+
+            joint_mask = random_agent_mask.all(dim=1)
 
             # update the agent
             losses = self.agent.learn(
@@ -205,7 +236,9 @@ class AgentTrainer:
                 actions,
                 log_probs,
                 adv,
-                expected_returns
+                expected_returns,
+                random_agent_mask,
+                joint_mask
             )
 
             # log losses and mean rewards for the current batch
@@ -224,9 +257,7 @@ class AgentTrainer:
 
 if __name__ == "__main__":
     layouts = [
-        "cramped_room",
         "asymmetric_advantages",
-        "coordination_ring"
     ]
 
     env = GeneralizedOvercooked(layouts=layouts)
