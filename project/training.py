@@ -1,10 +1,10 @@
-import math
 import torch
 import os
 import numpy as np
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 import random
+import argparse
 
 from agents.ppoAgent import PPOAgent
 from utils import GeneralizedOvercooked
@@ -256,9 +256,31 @@ class AgentTrainer:
 
 
 if __name__ == "__main__":
-    layouts = [
-        "asymmetric_advantages",
-    ]
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--layouts", 
+        nargs='+', 
+        help='List of layouts to train on', 
+        default=['cramped_room']
+    )
+    parser.add_argument(
+        "--episodes",
+        type=int,
+        default=1000,
+        help="Total number of episodes to train for"
+    )
+    parser.add_argument(
+        '--random',
+        action='store_true',
+        help='Both agents are always controlled by the network'
+    )
+    args = parser.parse_args()
+
+    layouts = args.layouts
+    random_prob = 0.3 if args.random else 0.0
+
+    print(f"Training on {layouts}")
+    print(f"Random agent probability: {random_prob}")
 
     env = GeneralizedOvercooked(layouts=layouts)
 
@@ -269,6 +291,6 @@ if __name__ == "__main__":
 
     agent = PPOAgent(input_dim=input_dim, action_dim=action_dim)
 
-    trainer = AgentTrainer(agent, env, layouts=layouts)
+    trainer = AgentTrainer(agent, env, layouts=layouts, random_agent_prob=random_prob)
 
-    trainer.train(total_episodes=2000)
+    trainer.train(total_episodes=args.episodes)
