@@ -20,9 +20,10 @@ class AgentTrainer:
         batch_eps=10,
         gamma=0.95,
         lam=0.99,
-        random_agent_prob=0.2
+        random_agent_prob=0.2,
+        device="cpu"
     ):
-        self.device = torch.device("cpu")
+        self.device = torch.device(device)
         self.agent = agent
         self.batch_eps = batch_eps
         self.gamma = gamma
@@ -70,7 +71,7 @@ class AgentTrainer:
         self.clear_memory()
 
         total_rewards = []
-        for ep in range(self.batch_eps):
+        for _ in range(self.batch_eps):
 
             # reset the environment
             obs = self.env.reset()
@@ -98,18 +99,19 @@ class AgentTrainer:
                 actions, log_probs = self.agent.get_actions(state)
 
                 # if the agent is random,  choose a random action for the random agent
-                if self.random_idx is not None:
+                if self.random_idx is not None and random.random() < 0.4:
                     # choose a random action for the random agent
-                    actions[self.random_idx] = random.randint(
-                        0, self.env.action_space.n - 1
-                    )
+                    actions[self.random_idx] = self.env.curr_env.action_space.sample()
+                # force the random agent to stay idle 60% of the time
+                elif self.random_idx is not None:
+                    actions[self.random_idx] = 4
 
                 next_obs, reward, done, info = self.env.step(actions.tolist())
 
                 shaped_rewards = info["shaped_r_by_agent"]
 
                 # convert the shaped rewards to a tensor
-                shaped_rewards = 0.5 * torch.FloatTensor(shaped_rewards).to(self.device)
+                shaped_rewards = torch.FloatTensor(shaped_rewards).to(self.device)
 
                 # keep track of the total episode reward for logging
                 ep_reward += reward
@@ -195,18 +197,6 @@ class AgentTrainer:
 
         pbar = tqdm(total=total_episodes, desc="PPO Training", unit="step")
         while self.current_episode < total_episodes:
-            # TODO: decide if curriculum learning is needed
-            """  # change stage every 1000 episodes
-            if (
-                self.current_episode > 0 and
-                self.current_episode % 1000 == 0 and
-                not self.last_stage
-            ):
-                try:
-                    self.env.next_stage()
-                except IndexError:
-                    self.last_stage = True
-            # collect a batch of trajectories """
             self.get_trajectories()
 
             # convert the stored trajectories to tensors
@@ -223,7 +213,6 @@ class AgentTrainer:
 
             adv, expected_returns = self.gae(rewards, V, dones)
             adv = adv[random_agent_mask]
-            expected_returns = expected_returns[random_agent_mask]
 
             # normalize the advantages
             adv = (adv - adv.mean()) / (adv.std() + 1e-10)

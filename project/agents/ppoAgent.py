@@ -10,24 +10,30 @@ class PPOAgent:
         self,
         input_dim,
         action_dim,
+        training=True,
         it_updates=12,
         eps=0.2,
         lr=8e-4,
+        entropy_coef=0.05,
+        device="cpu",
     ):
-        self.device = torch.device("cpu")
+        self.device = torch.device(device)
 
-        # create the actor and critic networks
         self.actor = FeedForward(input_dim, action_dim).to(self.device)
-        # critic takes the observations of both agents as input
-        self.critic = FeedForward(2 * input_dim, 1).to(self.device)
 
-        # define the optimizers
-        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr)
-        self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=lr)
+        # the critic is only used during training
+        if training:
+            self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr)
+             # critic takes the joint observations of both agents as input
+            self.critic = FeedForward(2 * input_dim, 1).to(self.device)
+            self.critic_optimizer = optim.Adam(self.critic.parameters(), lr=lr)
 
-        # PPO hyperparameters
-        self.it_updates = it_updates
-        self.eps = eps
+            self.mse = nn.MSELoss()
+
+            # PPO hyperparameters
+            self.it_updates = it_updates
+            self.eps = eps
+            self.entropy_coef = entropy_coef
 
     def learn(self, states, actions, log_probs_old, adv, expected_returns, random_agent_mask, joint_mask):
 
@@ -42,12 +48,16 @@ class PPOAgent:
             unclipped = ratios * adv
             clipped = torch.clamp(ratios, 1 - self.eps, 1 + self.eps) * adv
 
+            entropy = entropy.mean()
             actor_loss = -torch.min(unclipped, clipped)
-            actor_loss = torch.mean(actor_loss)
-
+            actor_loss = torch.mean(actor_loss) - self.entropy_coef * entropy
+            # Only consider the values of states without the random agent
             V = V[joint_mask]
+            target_values = expected_returns[joint_mask]
+            # repeat the values for both agents to match the expected returns
+            V = V.unsqueeze(1).repeat(1, 2)
 
-            critic_loss = torch.mean((V.unsqueeze(1) - expected_returns) ** 2)
+            critic_loss = self.mse(V, target_values)
 
             # update the actor and critic networks
             self.actor_optimizer.zero_grad()
@@ -91,3 +101,11 @@ class PPOAgent:
         log_probs = dist.log_prob(actions)
 
         return V, log_probs, dist.entropy()
+    
+    def load_actor(self, path):
+        """ Load the weights of the actor network """
+        self.actor.load_state_dict(torch.load(path, map_location=self.device))
+
+    def load_critic(self, path):
+        """ Load the weights of the critic network """
+        self.critic.load_state_dict(torch.load(path, map_location=self.device))

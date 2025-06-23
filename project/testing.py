@@ -2,13 +2,12 @@ import torch
 import numpy as np
 import os
 import pygame
-import random
 import argparse
 
 from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld
 from overcooked_ai_py.visualization.state_visualizer import StateVisualizer
-
 from models.feed_forward import FeedForward
+from agents.ppoAgent import PPOAgent
 from utils import make_env
 
 
@@ -18,34 +17,38 @@ class Tester:
         layouts: str | list[str],
         agent_paths,
         frame_rate=10,
+        device="cpu"
     ):
         if isinstance(layouts, str):
             layouts = [layouts]
 
         self.layouts = layouts
+        self.envs = [make_env(layout) for layout in layouts]
         self.frame_rate = frame_rate
         self.frame_duration = 1000 // frame_rate
-        self.device = torch.device("cpu")
-
-        # Set up dummy environment to get observation and action spaces
-        dummy_env = make_env("cramped_room")
+        self.device = torch.device(device)
 
         self.agents = []
+        input_dim = self.envs[0].observation_space.shape[0]
+        action_dim = self.envs[0].action_space.n
 
         # Load agents from the provided paths
         for i, path in enumerate(agent_paths):
             if path != 'random':
-                self.agents.append(FeedForward(
-                    dummy_env.observation_space.shape[-1],
-                    dummy_env.action_space.n
-                ))
-                self.agents[i].load_state_dict(torch.load(path))
+                agent = PPOAgent(
+                        input_dim,
+                        action_dim,
+                        training=False,
+                    )
+                agent.load_actor(path)
+                self.agents.append(agent)
             else:
                 self.agents.append(None)
 
+        print(f"Loaded agents: {self.agents}")
         self.visualizer = StateVisualizer()
 
-    def test_layout(self, layout, num_episodes=100):
+    def test_layout(self, layout, env, num_episodes=100):
         """
         Test the agent for multiple episodes and return average metrics.
 
@@ -57,52 +60,18 @@ class Tester:
             dict with average reward and soup count for each layout
         """
 
-        env = make_env(layout)
-
         total_rewards = []
         soups = []
 
         print(f"Testing layout: {layout}")
 
         for episode in range(num_episodes):
-            other_idx = None
-            # Ensure the order of the agents follows that of the paths
-            while other_idx != 1:
-                obs = env.reset()
-                other_idx = obs["other_agent_env_idx"]
-
-            done = False
-            episode_reward = 0
-            soup_count = 0
-            steps = 0
-
-            # The environment will end automatically when horizon is reached
-            while not done:
-                states = obs["both_agent_obs"]
-                states = torch.FloatTensor(np.array(states)).to(self.device)
-
-                actions = []
-                for i, agent in enumerate(self.agents):
-                    if agent is not None:
-                        # Get the logits from the policy 
-                        logits = agent(states[i])
-                        dist = torch.distributions.Categorical(logits=logits)
-                        action = dist.sample().item() 
-                        actions.append(action)
-                    else:
-                        # If the agent is None, use a random action
-                        actions.append(random.randint(0, env.action_space.n - 1))
-                    
-                obs, reward, done, _ = env.step(actions)
-
-                soup_count += reward // 20
-                episode_reward += reward
-                steps += 1
+            _, _, episode_reward, soup_count = self.play_episode(env)
 
             total_rewards.append(episode_reward)
             soups.append(soup_count)
             print(
-                f"Episode {episode + 1}/{num_episodes} - Reward: {episode_reward} - Soup Count: {soup_count}"
+                f"Episode {episode + 1}/{num_episodes} - Reward: {episode_reward} Soup Count: {soup_count}"
             )
 
         print()  # New line after the last episode
@@ -116,8 +85,8 @@ class Tester:
     def test(self, num_episodes=100):
         results = {}
 
-        for layout in self.layouts:
-            results[layout] = self.test_layout(layout, num_episodes)
+        for layout, env in zip(self.layouts, self.envs):
+            results[layout] = self.test_layout(layout, env, num_episodes)
 
         print("Evaluation Results:")
         for layout, (avg_reward, avg_soup) in results.items():
@@ -125,15 +94,13 @@ class Tester:
                 f"Layout: {layout} - Average Reward: {avg_reward}, Average Soup Count: {avg_soup}"
             )
 
-    def collect_trajectory(self, layout):
+    def play_episode(self, env):
         """
         Run a single episode in the given layout and collect the state trajectory.
 
         Returns:
             Tuple of (trajectory, HUD data, episode reward, soup count)
         """
-        env = make_env(layout)
-
         # Ensure the order of the agents follows that of the paths
         other_idx = None
         while other_idx != 1:
@@ -159,14 +126,11 @@ class Tester:
             actions = []
             for i, agent in enumerate(self.agents):
                 if agent is not None:
-                    # Get the logits from the policy 
-                    logits = agent(states[i])
-                    dist = torch.distributions.Categorical(logits=logits)
-                    action = dist.sample().item()
-                    actions.append(action)
+                    action, _ = agent.get_actions(states[i])
+                    actions.append(action.item())
                 else:
                     # If the agent is None, use a random action
-                    actions.append(random.randint(0, env.action_space.n - 1))
+                    actions.append(env.action_space.sample())
 
             obs, reward, done, info = env.step(actions)
             shaped_rewards = info["shaped_r_by_agent"]
@@ -182,9 +146,9 @@ class Tester:
         Render a trajectory for each layout using pygame.
         If no trajectory is provided, collect one first.
         """
-        for layout in self.layouts:
+        for layout, env in zip(self.layouts, self.envs):
 
-            trajectory, hud, reward, soups = self.collect_trajectory(layout)
+            trajectory, hud, reward, soups = self.play_episode(env)
             print(
                 f"Rendering: Layout: {layout} - Final Reward: {reward} - Soup Count: {soups}"
             )
