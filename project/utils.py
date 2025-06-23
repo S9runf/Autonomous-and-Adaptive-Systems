@@ -3,7 +3,7 @@ from overcooked_ai_py.mdp.overcooked_env import OvercookedEnv, Overcooked
 import torch
 import random
 
-def make_env(layout_name, linear_features=True):
+def make_env(layout_name):
     """ Create an Overcooked environment from a layout name """
 
     base_mdp = OvercookedGridworld.from_layout_name(
@@ -12,74 +12,33 @@ def make_env(layout_name, linear_features=True):
     )
     base_env = OvercookedEnv.from_mdp(base_mdp, horizon=400, info_level=0)
 
-    if linear_features:
-        featurize_fn = base_env.featurize_state_mdp
-    else:
-        featurize_fn = base_env.lossless_state_encoding_mdp
+    featurize_fn = base_env.featurize_state_mdp
     return Overcooked(
         base_env=base_env,
         featurize_fn=featurize_fn
     )
 
 
-class CurriculumStage:
-    def __init__(self, layouts, linear_features=True):
-        self.envs = []
-
-        assert isinstance(layouts, list), "Layouts should be a list of layout names."
-        assert len(layouts) > 0, "At least one layout name must be provided."
-
-        for layout in layouts:
-            env = make_env(layout, linear_features=linear_features)
-            self.envs.append(env)
-
 class GeneralizedOvercooked:
-    def __init__(self, curriculum=None, layouts=None, linear_features=True):
-        if curriculum is None and layouts is None:
-            raise ValueError("Either curriculum or layouts must be provided.")
+    def __init__(self, layouts):
+        if layouts is None:
+            raise ValueError("Layouts must be provided.")
 
-        if curriculum and layouts:
-            raise ValueError("Only one of curriculum or layouts should be provided.")
-
-        if curriculum:
-            self.stages = [
-                CurriculumStage(**stage, linear_features=linear_features)
-                  for stage in curriculum
-            ]
-        elif layouts:
-            self.layouts = layouts
-            self.stages = [CurriculumStage(layouts, linear_features=linear_features)]
+        self.layouts = layouts
+        self.envs = [make_env(layout) for layout in layouts]
 
         self.stage_idx = 0
-        self.curr_env = self.stages[self.stage_idx].envs[0]
+        self.curr_env = self.envs[0]
         self.observation_space = self.curr_env.observation_space
         self.action_space = self.curr_env.action_space
 
     def reset(self):
-        if len(self.stages[self.stage_idx].envs) > 1:
-            self.curr_env = random.choice(self.stages[self.stage_idx].envs)
+        if len(self.envs) > 1:
+            self.curr_env = random.choice(self.envs)
 
         return self.curr_env.reset()
 
     def step(self, *args):
         return self.curr_env.step(*args)
-
-    def next_stage(self):
-        if self.stage_idx < len(self.stages) - 1:
-            self.stage_idx += 1
-            self.curr_env = self.stages[self.stage_idx].envs[0]
-            print(f"Moved to stage {self.stage_idx + 1}.")
-        else:
-            raise IndexError("No more stages available in the curriculum.")
-
-
-TILE_TYPES = [" ", "X", "O", "D", "P", "S", "1", "2"]
-tile_to_idx = {c: i for i, c in enumerate(TILE_TYPES)}
-NUM_TILE_TYPES = len(TILE_TYPES)
-
-
-def grid_to_indices(grid_str):
-    indices = [[tile_to_idx.get(c, 0) for c in row] for row in grid_str]
-    return torch.tensor(indices, dtype=torch.long)
 
 
