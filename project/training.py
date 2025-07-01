@@ -2,7 +2,6 @@ import torch
 import os
 import numpy as np
 from tqdm import tqdm
-import matplotlib.pyplot as plt
 import random
 import argparse
 
@@ -10,7 +9,7 @@ from agents.ppoAgent import PPOAgent
 from utils import GeneralizedOvercooked
 
 
-class AgentTrainer: 
+class AgentTrainer:
 
     def __init__(
         self,
@@ -21,7 +20,7 @@ class AgentTrainer:
         gamma=0.95,
         lam=0.99,
         random_agent_prob=0.2,
-        device="cpu"
+        device="cpu",
     ):
         self.device = torch.device(device)
         self.agent = agent
@@ -31,6 +30,7 @@ class AgentTrainer:
         self.env = env
         self.layouts = layouts
         self.random_agent_prob = random_agent_prob
+        print(f"Random agent probability: {self.random_agent_prob}")
         self.random_idx = None
         self.random_agent_mask = []
 
@@ -42,21 +42,19 @@ class AgentTrainer:
 
         self.last_stage = False
 
+        self.total_rewards = []
         self.mean_reward = 0
 
     def store(self, state, action, log_prob, reward, done):
-        """ Store a single transition in the trajectory """
+        """Store a single transition in the trajectory"""
         self.states.append(state)
-        for i in range(2):
-            if i != self.random_idx:
-                self.actions.append(action[i])
-                self.log_probs.append(log_prob[i])
-                
+        self.actions.append(action)
+        self.log_probs.append(log_prob)
         self.rewards.append(reward)
         self.dones.append(done)
 
     def clear_memory(self):
-        """ Clear the stored trajectory """
+        """Clear the stored trajectory"""
         self.states.clear()
         self.actions.clear()
         self.log_probs.clear()
@@ -65,7 +63,7 @@ class AgentTrainer:
         self.random_agent_mask.clear()
 
     def get_trajectories(self):
-        """ Collect a batch of trajectories by running the agent in the environment """
+        """Collect a batch of trajectories by running the agent in the environment"""
 
         # ensure the memory is empty before starting a new batch
         self.clear_memory()
@@ -125,10 +123,11 @@ class AgentTrainer:
 
             total_rewards.append(ep_reward)
 
+        self.total_rewards.extend(total_rewards)
         self.mean_reward = sum(total_rewards) / len(total_rewards)
 
     def gae(self, rewards, V, dones):
-        """ Compute the Generalized Advantage Estimation (GAE) for the given rewards and value function estimates """
+        """Compute the Generalized Advantage Estimation (GAE) for the given rewards and value function estimates"""
         advantages = []
         returns = []
 
@@ -150,46 +149,20 @@ class AgentTrainer:
 
         return advantages, returns
 
-    def plot_results(self, actor_losses, critic_losses, mean_rewards):
-        """ Plot the training results """
-        plt.figure(figsize=(12, 6))
-
-        plt.subplot(1, 3, 1)
-        plt.plot(actor_losses, label='Actor Loss')
-        plt.xlabel('Training Steps')
-        plt.ylabel('Loss')
-        plt.title('Actor Loss Over Time')
-        plt.legend()
-
-        plt.subplot(1, 3, 2)
-        plt.plot(critic_losses, label='Critic Loss', color='orange')
-        plt.xlabel('Training Steps')
-        plt.ylabel('Loss')
-        plt.title('Critic Loss Over Time')
-        plt.legend()
-
-        plt.subplot(1, 3, 3)
-        plt.plot(mean_rewards, label='Mean Reward', color='green')
-        plt.xlabel('Training Steps')
-        plt.ylabel('Mean Reward')
-        plt.title('Mean Reward Over Time')
-        plt.legend()
-
-        plt.tight_layout()
-        plt.show()
-
     def save_models(self, layout):
-        """ Save the actor and critic models to disk """
+        """Save the actor and critic models to disk"""
         current_dir = os.path.dirname(os.path.abspath(__file__))
         os.makedirs(f"{current_dir}/weights", exist_ok=True)
 
-        torch.save(self.agent.actor.state_dict(), f"{current_dir}/weights/{layout}_ppo.pth")
-        torch.save(self.agent.critic.state_dict(), f"{current_dir}/weights/{layout}_critic_ppo.pth")
+        torch.save(self.agent.actor.state_dict(), f"{current_dir}/weights/{layout}.pth")
+        torch.save(
+            self.agent.critic.state_dict(), f"{current_dir}/weights/{layout}_critic.pth"
+        )
 
-        print(f"Models saved in {current_dir}/weights/{layout}_ppo.pth")
+        print(f"Models saved in {current_dir}/weights/{layout}.pth")
 
-    def train(self, total_episodes=1000):
-        """ Train the agent for the specified number of episodes """
+    def train(self, total_episodes=1000, model_name=None):
+        """Train the agent for the specified number of episodes"""
         self.current_episode = 0
         actor_losses = []
         critic_losses = []
@@ -201,15 +174,20 @@ class AgentTrainer:
 
             # convert the stored trajectories to tensors
             states = torch.FloatTensor(np.array(self.states)).to(self.device)
-            actions = torch.LongTensor(self.actions).to(self.device)
+            actions = torch.stack(self.actions).to(self.device)
             log_probs = torch.stack(self.log_probs).to(self.device)
             rewards = torch.stack(self.rewards).to(self.device)
             dones = torch.FloatTensor(self.dones).to(self.device)
             random_agent_mask = torch.tensor(self.random_agent_mask).to(self.device)
 
+            # filter the actions for the random agent
+            actions = actions[random_agent_mask]
+            log_probs = log_probs[random_agent_mask]
+
             # compute the advantages and expected returns
-            V, _, _ = self.agent.evaluate(states, actions,
-            random_agent_mask=random_agent_mask)
+            V, _, _ = self.agent.evaluate(
+                states, actions, random_agent_mask=random_agent_mask
+            )
 
             adv, expected_returns = self.gae(rewards, V, dones)
             adv = adv[random_agent_mask]
@@ -227,7 +205,7 @@ class AgentTrainer:
                 adv,
                 expected_returns,
                 random_agent_mask,
-                joint_mask
+                joint_mask,
             )
 
             # log losses and mean rewards for the current batch
@@ -237,31 +215,37 @@ class AgentTrainer:
             pbar.update(self.batch_eps)
             pbar.set_postfix({"mean_reward": self.mean_reward})
 
-        self.plot_results(actor_losses, critic_losses, mean_rewards)
-        if len(self.layouts) > 1:
+        if model_name is not None:
+            self.save_models(model_name)
+        elif len(self.layouts) > 1:
             self.save_models("generalized")
         else:
-            self.save_models(self.layouts[0])
+            self.save_models(self.env.layout_name)
+
+        return {
+            "episode_rewards": self.total_rewards,
+            "mean_rewards": mean_rewards
+        }
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--layouts", 
-        nargs='+', 
-        help='List of layouts to train on', 
-        default=['cramped_room']
+        "--layouts",
+        nargs="+",
+        help="List of layouts to train on",
+        default=["cramped_room"],
     )
     parser.add_argument(
         "--episodes",
         type=int,
         default=1000,
-        help="Total number of episodes to train for"
+        help="Total number of episodes to train for",
     )
     parser.add_argument(
-        '--random',
-        action='store_true',
-        help='Both agents are always controlled by the network'
+        "--random",
+        action="store_true",
+        help="Both agents are always controlled by the network",
     )
     args = parser.parse_args()
 
@@ -269,7 +253,6 @@ if __name__ == "__main__":
     random_prob = 0.3 if args.random else 0.0
 
     print(f"Training on {layouts}")
-    print(f"Random agent probability: {random_prob}")
 
     env = GeneralizedOvercooked(layouts=layouts)
 

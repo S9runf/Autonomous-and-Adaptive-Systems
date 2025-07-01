@@ -4,33 +4,33 @@ import os
 import pygame
 import argparse
 
-from overcooked_ai_py.mdp.overcooked_mdp import OvercookedGridworld
 from overcooked_ai_py.visualization.state_visualizer import StateVisualizer
-from models.feed_forward import FeedForward
 from agents.ppoAgent import PPOAgent
-from utils import make_env
+from utils import GeneralizedOvercooked
 
 
 class Tester:
     def __init__(
         self,
-        layouts: str | list[str],
-        agent_paths,
+        env,
+        agent_paths=['random', 'random'],
         frame_rate=10,
         device="cpu"
     ):
-        if isinstance(layouts, str):
-            layouts = [layouts]
-
-        self.layouts = layouts
-        self.envs = [make_env(layout) for layout in layouts]
+        self.env = env
         self.frame_rate = frame_rate
         self.frame_duration = 1000 // frame_rate
         self.device = torch.device(device)
 
         self.agents = []
-        input_dim = self.envs[0].observation_space.shape[0]
-        action_dim = self.envs[0].action_space.n
+        input_dim = self.env.observation_space.shape[0]
+        action_dim = self.env.action_space.n
+
+        # Ensure we have exactly 2 agents, duplicating the first if necessary
+        if len(agent_paths) == 1:
+            agent_paths.append(agent_paths[0])
+
+        print(agent_paths)
 
         # Load agents from the provided paths
         for i, path in enumerate(agent_paths):
@@ -44,11 +44,9 @@ class Tester:
                 self.agents.append(agent)
             else:
                 self.agents.append(None)
-
-        print(f"Loaded agents: {self.agents}")
         self.visualizer = StateVisualizer()
 
-    def test_layout(self, layout, env, num_episodes=100):
+    def test_layout(self, num_episodes=100):
         """
         Test the agent for multiple episodes and return average metrics.
 
@@ -63,10 +61,10 @@ class Tester:
         total_rewards = []
         soups = []
 
-        print(f"Testing layout: {layout}")
+        print(f"Testing layout: {self.env.layout_name}")
 
         for episode in range(num_episodes):
-            _, _, episode_reward, soup_count = self.play_episode(env)
+            _, _, episode_reward, soup_count = self.play_episode()
 
             total_rewards.append(episode_reward)
             soups.append(soup_count)
@@ -75,26 +73,30 @@ class Tester:
             )
 
         print()  # New line after the last episode
-        avg_reward = sum(total_rewards) / num_episodes
-        avg_soup = sum(soups) / num_episodes
-        print(f"Average Reward for {layout}: {avg_reward}")
-        print(f"Average Soup Count for {layout}: {avg_soup}")
+        avg_reward = np.mean(total_rewards)
+        avg_soup = np.mean(soups)
+        std_reward = np.std(total_rewards)
 
-        return avg_reward, avg_soup
+        return avg_reward, std_reward, avg_soup
 
     def test(self, num_episodes=100):
         results = {}
 
-        for layout, env in zip(self.layouts, self.envs):
-            results[layout] = self.test_layout(layout, env, num_episodes)
+        last_layout = False
+        while not last_layout:
+            results[self.env.layout_name] = self.test_layout(num_episodes)
+            try:
+                self.env.next_layout()
+            except IndexError:
+                last_layout = True 
 
         print("Evaluation Results:")
-        for layout, (avg_reward, avg_soup) in results.items():
+        for layout, (avg_reward, std_reward, avg_soup) in results.items():
             print(
-                f"Layout: {layout} - Average Reward: {avg_reward}, Average Soup Count: {avg_soup}"
+                f"Layout: {layout} - Average Reward: {avg_reward} , Standard Deviation: {std_reward:.2f}, Average Soup Count: {avg_soup}\n"
             )
 
-    def play_episode(self, env):
+    def play_episode(self):
         """
         Run a single episode in the given layout and collect the state trajectory.
 
@@ -104,7 +106,7 @@ class Tester:
         # Ensure the order of the agents follows that of the paths
         other_idx = None
         while other_idx != 1:
-            obs = env.reset()
+            obs = self.env.reset()
             other_idx = obs["other_agent_env_idx"]
         done = False
 
@@ -130,9 +132,10 @@ class Tester:
                     actions.append(action.item())
                 else:
                     # If the agent is None, use a random action
-                    actions.append(env.action_space.sample())
+                    actions.append(self.env.action_space.sample())
+                    # actions.append(4)
 
-            obs, reward, done, info = env.step(actions)
+            obs, reward, done, info = self.env.step(actions)
             shaped_rewards = info["shaped_r_by_agent"]
 
             soup_count += reward // 20
@@ -146,17 +149,16 @@ class Tester:
         Render a trajectory for each layout using pygame.
         If no trajectory is provided, collect one first.
         """
-        for layout, env in zip(self.layouts, self.envs):
+        last_layout = False
+        while not last_layout:
+            trajectory, hud, reward, soups = self.play_episode()
 
-            trajectory, hud, reward, soups = self.play_episode(env)
             print(
-                f"Rendering: Layout: {layout} - Final Reward: {reward} - Soup Count: {soups}"
+                f"Rendering: Layout: {self.env.layout_name} - Final Reward: {reward} - Soup Count: {soups}"
             )
 
-            base_mdp = OvercookedGridworld.from_layout_name(
-                layout,
-                old_dynamics=True
-            )
+            base_mdp = self.env.curr_env.base_env.mdp
+
             # Generate frames
             frames = [
                 self.visualizer.render_state(
@@ -173,7 +175,7 @@ class Tester:
             window = pygame.display.set_mode(
                 frame.get_size(), pygame.HWSURFACE | pygame.DOUBLEBUF | pygame.RESIZABLE
             )
-            pygame.display.set_caption(f"Overcooked AI - {layout}")
+            pygame.display.set_caption(f"Overcooked AI - {self.env.layout_name}")
 
             frame_count = 0
             running = True
@@ -197,7 +199,10 @@ class Tester:
                     # wait for 2 seconds after the last frame before quitting
                     elif frame_count >= len(frames) + self.frame_rate * 2:
                         running = False
-
+            try:
+                self.env.next_layout()
+            except IndexError:
+                last_layout = True
         pygame.quit()
 
 
@@ -235,19 +240,17 @@ if __name__ == "__main__":
 
         agent_paths.append(path)
 
-    # Ensure we have exactly 2 agents, filling with 'random' if necessary
-    agent_names = args.agents
-    if len(agent_paths) == 1:
-        agent_paths.append('random')
-        agent_names.append('random')
 
     layouts = args.layouts
 
     print(f"Agents: {args.agents}")
     print(f"Layouts: {layouts}")
 
+    env = GeneralizedOvercooked(layouts=layouts, randomize=False)
+
     # Example usage
-    tester = Tester(layouts=layouts, agent_paths=agent_paths, frame_rate=10)
+    tester = Tester(env=env, agent_paths=agent_paths, frame_rate=10)
 
     tester.test(num_episodes=100)
+    env.reset_layouts()
     tester.render_trajectories()
