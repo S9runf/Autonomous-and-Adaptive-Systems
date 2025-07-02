@@ -19,7 +19,7 @@ class AgentTrainer:
         batch_eps=10,
         gamma=0.95,
         lam=0.99,
-        random_agent_prob=0.2,
+        random_agent_prob=0.0,
         device="cpu",
     ):
         self.device = torch.device(device)
@@ -30,7 +30,7 @@ class AgentTrainer:
         self.env = env
         self.layouts = layouts
         self.random_agent_prob = random_agent_prob
-        print(f"Random agent probability: {self.random_agent_prob}")
+
         self.random_idx = None
         self.random_agent_mask = []
 
@@ -44,6 +44,10 @@ class AgentTrainer:
 
         self.total_rewards = []
         self.mean_reward = 0
+
+
+        print(f"Training on layouts: {layouts}")
+        print(f"Random agent probability: {self.random_agent_prob}")
 
     def store(self, state, action, log_prob, reward, done):
         """Store a single transition in the trajectory"""
@@ -228,6 +232,25 @@ class AgentTrainer:
         }
 
 
+def train_agent(layouts, episodes, random_prob=0, model_name=None):
+    # Make sure layouts is a list
+    if type(layouts) is str:
+        layouts = [layouts]
+
+    env = GeneralizedOvercooked(layouts=layouts)
+
+    # get the last dimension of the observation space
+    # this allows to handle different featurization methods if needed
+    input_dim = env.observation_space.shape[-1]
+    action_dim = env.action_space.n
+
+    agent = PPOAgent(input_dim=input_dim, action_dim=action_dim)
+
+    trainer = AgentTrainer(agent, env, layouts=layouts, random_agent_prob=random_prob)
+
+    return trainer.train(total_episodes=episodes, model_name=model_name)
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -243,26 +266,27 @@ if __name__ == "__main__":
         help="Total number of episodes to train for",
     )
     parser.add_argument(
-        "--random",
-        action="store_true",
-        help="Both agents are always controlled by the network",
+        "--random_prob",
+        type=float,
+        default=0.0,
+        help="Probability of taking a random action",
     )
+    parser.add_argument(
+        "--model_name",
+        type=str,
+        default=None,
+        help="Name of the model to save",
+    )
+
+
     args = parser.parse_args()
 
     layouts = args.layouts
-    random_prob = 0.3 if args.random else 0.0
+    random_prob = args.random_prob
 
-    print(f"Training on {layouts}")
-
-    env = GeneralizedOvercooked(layouts=layouts)
-
-    # get the last dimension of the observation space
-    # this allows to handle different featurization methods if needed
-    input_dim = env.observation_space.shape[-1]
-    action_dim = env.action_space.n
-
-    agent = PPOAgent(input_dim=input_dim, action_dim=action_dim)
-
-    trainer = AgentTrainer(agent, env, layouts=layouts, random_agent_prob=random_prob)
-
-    trainer.train(total_episodes=args.episodes)
+    train_agent(
+        layouts=layouts,
+        episodes=args.episodes,
+        random_prob=random_prob,
+        model_name=args.model_name,
+    )

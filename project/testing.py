@@ -30,11 +30,11 @@ class Tester:
         if len(agent_paths) == 1:
             agent_paths.append(agent_paths[0])
 
-        print(agent_paths)
+        print([os.path.basename(str(path)) for path in agent_paths])
 
         # Load agents from the provided paths
-        for i, path in enumerate(agent_paths):
-            if path != 'random':
+        for path in agent_paths:
+            if path not in ['random', 'idle']:
                 agent = PPOAgent(
                         input_dim,
                         action_dim,
@@ -43,7 +43,7 @@ class Tester:
                 agent.load_actor(path)
                 self.agents.append(agent)
             else:
-                self.agents.append(None)
+                self.agents.append(path)
         self.visualizer = StateVisualizer()
 
     def test_layout(self, num_episodes=100):
@@ -127,13 +127,14 @@ class Tester:
 
             actions = []
             for i, agent in enumerate(self.agents):
-                if agent is not None:
+                if isinstance(agent, PPOAgent):
                     action, _ = agent.get_actions(states[i])
                     actions.append(action.item())
-                else:
-                    # If the agent is None, use a random action
+                elif agent == 'random':
+                    # If the agent is 'random', use a random action
                     actions.append(self.env.action_space.sample())
-                    # actions.append(4)
+                elif agent == 'idle':
+                    actions.append(4)  # Idle action
 
             obs, reward, done, info = self.env.step(actions)
             shaped_rewards = info["shaped_r_by_agent"]
@@ -205,6 +206,52 @@ class Tester:
                 last_layout = True
         pygame.quit()
 
+def test_agents(agents, layouts, num_episodes=100, render=False):
+    # convert agents and layouts to lists if they are strings
+    if type(agents) is str:
+        agents = [agents]
+    if type(layouts) is str:
+        layouts = [layouts]
+
+
+    if len(agents) == 0:
+        raise ValueError("You must specify at least one agent.")
+    if len(agents) > 2:
+        raise ValueError("You can only specify a maximum of 2 agents.")
+
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+
+    # Convert agent names to full paths
+    agent_paths = []
+    weights_dir = os.path.join(current_dir, "weights")
+    for agent_name in agents:
+        if agent_name not in ['random', 'idle']:
+            # Check if agent_name exists as a file in the weights directory
+            # (with or without .pth)
+            candidate_path = os.path.join(weights_dir, agent_name)
+            if not candidate_path.endswith(".pth"):
+                candidate_path = candidate_path + ".pth"
+
+            if os.path.isfile(candidate_path):
+                path = candidate_path
+            else:
+                raise FileNotFoundError(f"Agent weights file not found for '{agent_name}'")
+        else:
+            # 'random' agent does not have a path
+            path = agent_name  
+
+        agent_paths.append(path)
+
+    env = GeneralizedOvercooked(layouts=layouts, randomize=False)
+
+    # Example usage
+    tester = Tester(env=env, agent_paths=agent_paths, frame_rate=10)
+
+    tester.test(num_episodes=num_episodes)
+    env.reset_layouts()
+    if render:
+        tester.render_trajectories()
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -213,7 +260,7 @@ if __name__ == "__main__":
         nargs='+',
         type=str,
         help="List of agent weights files (max 2) to load from the weights directory",
-        default=['random', 'random']
+        default=[]
     )
     parser.add_argument(
         "--layouts",
@@ -221,36 +268,18 @@ if __name__ == "__main__":
         required=True,
         help="List of layouts to test on"
     )
+    parser.add_argument(
+        "--render",
+        action='store_true',
+        help="Render the trajectories using pygame"
+    )
     args = parser.parse_args()
-
-    if len(args.agents) > 2:
-        raise ValueError("You can only specify a maximum of 2 agents.")
-
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-
-    # Convert agent names to full paths
-    agent_paths = []
-    for agent_name in args.agents:
-        if agent_name != 'random' and agent_name.endswith(".pth"):
-            path = f"{current_dir}/weights/{agent_name}"
-        elif agent_name != 'random':
-            path = f"{current_dir}/weights/{agent_name}.pth"
-        else:
-            path = agent_name  # 'random' agent does not have a path
-
-        agent_paths.append(path)
-
 
     layouts = args.layouts
 
-    print(f"Agents: {args.agents}")
-    print(f"Layouts: {layouts}")
-
-    env = GeneralizedOvercooked(layouts=layouts, randomize=False)
-
-    # Example usage
-    tester = Tester(env=env, agent_paths=agent_paths, frame_rate=10)
-
-    tester.test(num_episodes=100)
-    env.reset_layouts()
-    tester.render_trajectories()
+    test_agents(
+        agents=args.agents,
+        layouts=layouts,
+        num_episodes=100,
+        render=args.render
+    )
