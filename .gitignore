@@ -4,6 +4,8 @@
 __pycache__/
 weights/
 
+.python-version
+
 # LaTeX auxiliary files
 *.aux
 *.bbl
