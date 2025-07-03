@@ -3,3 +3,16 @@
 
 __pycache__/
 weights/
+
+# LaTeX auxiliary files
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
+*.nav
+*.snm
+*.toc

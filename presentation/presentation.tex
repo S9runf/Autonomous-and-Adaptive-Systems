@@ -1,0 +1,58 @@
+\documentclass{beamer}
+\usetheme{Madrid}
+
+\title{Overcooked}
+\author{Davide Luccioli}
+\institute{University of Bologna}
+\date{}
+
+\begin{document}
+
+\begin{frame}{Project Overview}
+  \begin{columns}
+    \column{0.5\textwidth}
+    \textbf{Objective}
+    \begin{itemize}
+      \item To train robust agents for the Overcooked-AI environment using Multi-Agent Proximal Policy Optimization (MAPPO).
+      \item Focus on generalization across different layouts and partner behaviors.
+    \end{itemize}
+    \vfill
+
+    \column{0.5\textwidth}
+    \textbf{Methodology}
+    \begin{itemize}
+      \item Implemented a MAPPO agent with a centralized critic.
+      \item \textbf{Multi-Layout Training}: Agent trained on a random selection of layouts.
+      \item \textbf{Partner Generalization}: Agent trained with a stochastic partner to improve adaptability.
+    \end{itemize}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Key Results \& Findings}
+  \textbf{Single Layout Performance}
+  \begin{itemize}
+    \item Agents successfully mastered individual layouts, with emergent specialized strategies observed in layouts like \texttt{asymmetric\_advantages}.
+  \end{itemize}
+  
+  \textbf{Multi-Layout Generalization}
+  \begin{itemize}
+    \item The agent performed well on layouts it was trained on and showed some generalization to structurally similar unseen layouts.
+    \item Failed to generalize to more complex, fundamentally different layouts.
+  \end{itemize}
+  
+  \textbf{Partner Generalization}
+  \begin{itemize}
+    \item Training with a stochastic partner forced the agent to learn more robust strategies.
+    \item On layouts encouraging specialization (e.g., \texttt{asymmetric\_advantages}), the agent struggled to adapt, showing that overcoming ingrained strategies is a major challenge.
+  \end{itemize}
+\end{frame}
+  
+\begin{frame}{Conclusion}
+  \begin{itemize}
+    \item MAPPO is effective for learning cooperative tasks in Overcooked.
+    \item Layout Generalization is Limited: While agents can adapt to structurally similar unseen layouts, they struggle with fundamentally different ones, indicating some overfitting.
+    \item Agents can be trained to handle unpredictable partners, but this often comes at the cost of optimal performance in layouts that require tight, specialized coordination.
+  \end{itemize}
+\end{frame}
+
+\end{document}
