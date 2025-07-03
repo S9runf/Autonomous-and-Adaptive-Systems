@@ -46,16 +46,9 @@ class Tester:
                 self.agents.append(path)
         self.visualizer = StateVisualizer()
 
-    def test_layout(self, num_episodes=100):
+    def test_layout(self, num_episodes=100, verbose=False):
         """
         Test the agent for multiple episodes and return average metrics.
-
-        Args:
-            layout: Name of the layout to test
-            num_episodes: Number of episodes to test for each layout
-
-        Returns:
-            dict with average reward and soup count for each layout
         """
 
         total_rewards = []
@@ -68,23 +61,24 @@ class Tester:
 
             total_rewards.append(episode_reward)
             soups.append(soup_count)
-            print(
-                f"Episode {episode + 1}/{num_episodes} - Reward: {episode_reward} Soup Count: {soup_count}"
-            )
-
-        print()  # New line after the last episode
+            if verbose:
+                print(
+                    f"Episode {episode + 1}/{num_episodes} - Reward: {episode_reward} Soup Count: {soup_count}\n"
+                )
+            else:
+                print(f"episode {episode+1}/{num_episodes}", end="\r")
         avg_reward = np.mean(total_rewards)
         avg_soup = np.mean(soups)
         std_reward = np.std(total_rewards)
 
         return avg_reward, std_reward, avg_soup
 
-    def test(self, num_episodes=100):
+    def test(self, num_episodes=100, verbose=False):
         results = {}
 
         last_layout = False
         while not last_layout:
-            results[self.env.layout_name] = self.test_layout(num_episodes)
+            results[self.env.layout_name] = self.test_layout(num_episodes, verbose=verbose)
             try:
                 self.env.next_layout()
             except IndexError:
@@ -98,10 +92,7 @@ class Tester:
 
     def play_episode(self):
         """
-        Run a single episode in the given layout and collect the state trajectory.
-
-        Returns:
-            Tuple of (trajectory, HUD data, episode reward, soup count)
+        Run a single episode in the current layout and collect the state trajectory.
         """
         # Ensure the order of the agents follows that of the paths
         other_idx = None
@@ -112,7 +103,6 @@ class Tester:
 
         trajectory = []
         hud = []
-        shaped_rewards = [0, 0]
 
         episode_reward = 0
         soup_count = 0
@@ -120,7 +110,7 @@ class Tester:
 
         while not done:
             trajectory.append(obs["overcooked_state"])
-            hud.append({"score": episode_reward, "soups": soup_count, "shaped_rewards": shaped_rewards})
+            hud.append({"score": episode_reward, "soups": soup_count})
 
             states = obs["both_agent_obs"]
             states = torch.FloatTensor(np.array(states)).to(self.device)
@@ -137,7 +127,6 @@ class Tester:
                     actions.append(4)  # Idle action
 
             obs, reward, done, info = self.env.step(actions)
-            shaped_rewards = info["shaped_r_by_agent"]
 
             soup_count += reward // 20
             episode_reward += reward
@@ -148,7 +137,6 @@ class Tester:
     def render_trajectories(self):
         """
         Render a trajectory for each layout using pygame.
-        If no trajectory is provided, collect one first.
         """
         last_layout = False
         while not last_layout:
@@ -206,21 +194,10 @@ class Tester:
                 last_layout = True
         pygame.quit()
 
-def test_agents(agents, layouts, num_episodes=100, render=False):
-    # convert agents and layouts to lists if they are strings
-    if type(agents) is str:
-        agents = [agents]
-    if type(layouts) is str:
-        layouts = [layouts]
 
-
-    if len(agents) == 0:
-        raise ValueError("You must specify at least one agent.")
-    if len(agents) > 2:
-        raise ValueError("You can only specify a maximum of 2 agents.")
+def get_paths(agents):  
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
-
     # Convert agent names to full paths
     agent_paths = []
     weights_dir = os.path.join(current_dir, "weights")
@@ -242,15 +219,39 @@ def test_agents(agents, layouts, num_episodes=100, render=False):
 
         agent_paths.append(path)
 
+    return agent_paths
+
+
+def test_agents(agents, layouts, num_episodes=100, render=False, verbose=False):
+    # convert agents and layouts to lists if they are strings
+    if type(agents) is str:
+        agents = [agents]
+    if type(layouts) is str:
+        layouts = [layouts]
+
+    if len(agents) == 0:
+        raise ValueError("You must specify at least one agent.")
+    if len(agents) > 2:
+        raise ValueError("You can only specify a maximum of 2 agents.")
+
     env = GeneralizedOvercooked(layouts=layouts, randomize=False)
 
-    # Example usage
+    agent_paths = get_paths(agents)
     tester = Tester(env=env, agent_paths=agent_paths, frame_rate=10)
 
-    tester.test(num_episodes=num_episodes)
+    tester.test(num_episodes=num_episodes, verbose=verbose)
     env.reset_layouts()
     if render:
         tester.render_trajectories()
+
+
+def render_episodes(agents, layouts):
+
+    env = GeneralizedOvercooked(layouts=layouts, randomize=False)
+    agent_paths = get_paths(agents)
+    tester = Tester(env=env, agent_paths=agent_paths, frame_rate=10)
+
+    tester.render_trajectories()
 
 
 if __name__ == "__main__":
@@ -273,6 +274,12 @@ if __name__ == "__main__":
         action='store_true',
         help="Render the trajectories using pygame"
     )
+    parser.add_argument(
+        "--verbose",
+        action='store_true',
+        help="Print the results of each episode"
+    )
+
     args = parser.parse_args()
 
     layouts = args.layouts
@@ -281,5 +288,6 @@ if __name__ == "__main__":
         agents=args.agents,
         layouts=layouts,
         num_episodes=100,
-        render=args.render
+        render=args.render,
+        verbose=args.verbose
     )

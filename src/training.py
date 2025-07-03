@@ -269,7 +269,7 @@ if __name__ == "__main__":
         "--random_prob",
         type=float,
         default=0.0,
-        help="Probability of taking a random action",
+        help="Probability of using a random agent for each episode",
     )
     parser.add_argument(
         "--model_name",
