@@ -270,6 +270,11 @@ if __name__ == "__main__":
         help="List of layouts to test on"
     )
     parser.add_argument(
+        "--no-test",
+        action='store_true',
+        help="If set, only render the trajectories without testing the agents"
+    )
+    parser.add_argument(
         "--render",
         action='store_true',
         help="Render the trajectories using pygame"
@@ -284,10 +289,13 @@ if __name__ == "__main__":
 
     layouts = args.layouts
 
-    test_agents(
-        agents=args.agents,
-        layouts=layouts,
-        num_episodes=100,
-        render=args.render,
-        verbose=args.verbose
-    )
+    if args.no_test:
+        render_episodes(agents=args.agents, layouts=layouts)
+    else:
+        test_agents(
+            agents=args.agents,
+            layouts=layouts,
+            num_episodes=100,
+            render=args.render,
+            verbose=args.verbose
+        )

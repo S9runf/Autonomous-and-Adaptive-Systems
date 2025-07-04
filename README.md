@@ -36,6 +36,7 @@ python src/test.py
 - `--layouts`: A list of layouts to test on.
 - `render`: If set, an episode will be rendered in a GUI window after testing is completed.
 - `verbose`: If set, the results of each episode will be printed to the console.
+- `--no-test`: If set, only renders the trajectories without testing the agents.
 
 ## Demo
 The `train_agents.ipynb` notebook contains the code used to train and test all agents featured in the experiments. For a demonstration of some of these agents in action, refer to `demo.ipynb`.
