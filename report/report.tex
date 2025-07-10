@@ -246,7 +246,9 @@ Layout & Partner & Agent Pos & Mean Reward & Std Dev \\
 
 Values marked as N.A. in the table indicate that setting the partner to idle makes the task impossible to complete for that layout.
 
-As a final test we trained a single agent on the same layouts as the multi-layout training, but with a stochastic partner. The agent was trained for 20,000 episodes with a \texttt{random\_agent\_prob} of 75\%. The results of this training were mostly comparable with those obtained by the single-layout random partner training, with the exception of the \texttt{coordination\_ring} layout, which the agent was unable to solve. 
+Better results were obtained in the \texttt{asymmetric\_advantages} layout, by setting the entropy coefficient to 0 and the random partner probability to 30\%. This configuration allowed the agent to keep its ability to coordinate with itself while still being able to adapt to a random partner when playing as the first player. The agent was able to obtain a score of 162.2 on average in self-play, 163.8 when playing as the first player with a random partner and 180.4 with an idle partner. When playing as the second player the average number of soups remained close to 0.
+
+As a final test we trained a single agent on the same layouts as the multi-layout training, but with a stochastic partner. The agent was trained for 20,000 episodes with a \texttt{random\_agent\_prob} of 75\%. The results of this training were mostly comparable with those obtained by the single-layout random partner training, with the exception of the \texttt{coordination\_ring} layout, where the agent failed to develop a viable strategy, and the \texttt{asymmetric\_advantages} layout, where some coordination ability was retained in self-play.
 
 \section{Conclusion}
 The results of our experiments show that our agents are capable of learning effective policies for the Overcooked environment using the MAPPO algorithm. The agents successfully mastered individual layouts, demonstrating the ability to learn specialized strategies tailored to specific tasks. 

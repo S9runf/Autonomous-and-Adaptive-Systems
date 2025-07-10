@@ -232,7 +232,12 @@ class AgentTrainer:
         }
 
 
-def train_agent(layouts, episodes, random_prob=0, model_name=None):
+def train_agent(
+        layouts,
+        episodes,
+        random_prob=0,
+        entropy_coef=0.05,
+        model_name=None):
     # Make sure layouts is a list
     if type(layouts) is str:
         layouts = [layouts]
@@ -244,7 +249,7 @@ def train_agent(layouts, episodes, random_prob=0, model_name=None):
     input_dim = env.observation_space.shape[-1]
     action_dim = env.action_space.n
 
-    agent = PPOAgent(input_dim=input_dim, action_dim=action_dim)
+    agent = PPOAgent(input_dim=input_dim, action_dim=action_dim, entropy_coef=entropy_coef)
 
     trainer = AgentTrainer(agent, env, layouts=layouts, random_agent_prob=random_prob)
 
